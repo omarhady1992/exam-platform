@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Wrapper so Study Mentor can run: /workspace/exam-platform/bin/exam <command> ...
+DIR="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+PY="$DIR/.venv/bin/python"; [ -x "$PY" ] || PY=python3
+exec "$PY" "$DIR/tools/exam_cli.py" "$@"

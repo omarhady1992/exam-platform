@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://omarhady1992.github.io/exam-platform/exam.schema.json",
+  "title": "Exam definition",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["slug", "title", "time_limit_minutes", "questions"],
+  "properties": {
+    "$schema": {"type": "string"},
+    "slug": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,80}$", "description": "Unique id; re-uploading the same slug updates the exam."},
+    "title": {"type": "string", "minLength": 1},
+    "instructions": {"type": "string"},
+    "time_limit_minutes": {"type": "integer", "minimum": 1, "maximum": 1440},
+    "opens_at": {"type": ["string", "null"], "description": "ISO date-time. Without an offset it is read as Cairo time (Africa/Cairo)."},
+    "closes_at": {"type": ["string", "null"], "description": "ISO date-time. Without an offset it is read as Cairo time. Attempts end at the earlier of time limit and closes_at."},
+    "attempts_allowed": {"type": "integer", "minimum": 1, "default": 1},
+    "shuffle_questions": {"type": "boolean", "default": false},
+    "shuffle_options": {"type": "boolean", "default": false},
+    "log_focus": {"type": "boolean", "default": true, "description": "Log tab switches / leaving the page."},
+    "published": {"type": "boolean", "description": "Optional. If omitted, the current published state is kept (new exams start unpublished)."},
+    "questions": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/question"}}
+  },
+  "$defs": {
+    "option": {
+      "oneOf": [
+        {"type": "string", "minLength": 1},
+        {"type": "object", "additionalProperties": false, "required": ["id", "text"],
+         "properties": {"id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,20}$"}, "text": {"type": "string", "minLength": 1}}}
+      ]
+    },
+    "question": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "prompt"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,40}$", "description": "Stable question id within the exam (e.g. q1). Used by mark files."},
+        "type": {"enum": ["mcq", "multi", "tf", "short", "numeric"]},
+        "prompt": {"type": "string", "minLength": 1},
+        "marks": {"type": "number", "minimum": 0, "default": 1},
+        "image": {"type": "string", "description": "Local image path (relative to the JSON file). Uploaded to private storage."},
+        "options": {"type": "array", "minItems": 2, "items": {"$ref": "#/$defs/option"}},
+        "answer": {"description": "mcq: option id; multi: array of option ids; tf: true/false; numeric: number; short: model answer text (optional)"},
+        "tolerance_abs": {"type": ["number", "null"], "minimum": 0},
+        "tolerance_pct": {"type": ["number", "null"], "minimum": 0},
+        "unit": {"type": ["string", "null"]},
+        "explanation": {"type": ["string", "null"], "description": "Shown to the student after results are released."}
+      },
+      "allOf": [
+        {"if": {"properties": {"type": {"const": "mcq"}}}, "then": {"required": ["options", "answer"], "properties": {"answer": {"type": "string"}}}},
+        {"if": {"properties": {"type": {"const": "multi"}}}, "then": {"required": ["options", "answer"], "properties": {"answer": {"type": "array", "minItems": 1, "items": {"type": "string"}}}}},
+        {"if": {"properties": {"type": {"const": "tf"}}}, "then": {"required": ["answer"], "properties": {"answer": {"type": "boolean"}, "options": false}}},
+        {"if": {"properties": {"type": {"const": "numeric"}}}, "then": {"required": ["answer"], "properties": {"answer": {"type": "number"}, "options": false}}},
+        {"if": {"properties": {"type": {"const": "short"}}}, "then": {"properties": {"answer": {"type": ["string", "null"]}, "options": false}}}
+      ]
+    }
+  }
+}
