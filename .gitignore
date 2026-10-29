@@ -1,0 +1,8 @@
+.venv/
+.secrets/
+exams/
+__pycache__/
+*.pyc
+*.local.json
+results/
+.env

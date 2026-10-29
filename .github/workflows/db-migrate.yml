@@ -1,0 +1,19 @@
+name: DB migrate
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['supabase/**', 'scripts/migrate.sh']
+concurrency: db-migrate
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client >/dev/null
+      - name: Apply migrations and verify security
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          if [ -z "$SUPABASE_DB_URL" ]; then echo "SUPABASE_DB_URL secret not set; skipping"; exit 0; fi
+          ./scripts/migrate.sh
