@@ -269,6 +269,14 @@ def cmd_delete_exam(a):
     if not a.yes:
         raise CliError("This deletes the exam, its questions, keys, attempts and answers. Re-run with --yes")
     print(json.dumps(rpc("admin_delete_exam", p_slug=a.slug)))
+    url, key = _cfg()
+    r = requests.post(f"{url}/storage/v1/object/list/exam-images", headers=_headers(key, {"Content-Type": "application/json"}),
+                      json={"prefix": f"{a.slug}/", "limit": 1000}, timeout=60)
+    names = [f"{a.slug}/{o['name']}" for o in (r.json() if r.ok else []) if o.get("name")]
+    if names:
+        d = requests.delete(f"{url}/storage/v1/object/exam-images", headers=_headers(key, {"Content-Type": "application/json"}),
+                            json={"prefixes": names}, timeout=60)
+        print(f"removed {len(names)} image(s)" if d.ok else f"warning: image cleanup failed ({d.status_code})")
 
 
 def cmd_allow_user(a):
