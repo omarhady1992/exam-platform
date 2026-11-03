@@ -42,6 +42,14 @@ begin
     raise exception 'SECURITY FAIL: non-allowlisted user can list exams';
   exception when insufficient_privilege then raise notice 'ok: non-allowlisted user rejected';
   end;
+  if private.can_view_image('x/sheet-0.png') then
+    raise exception 'SECURITY FAIL: non-allowlisted user passes can_view_image';
+  end if;
+  begin
+    perform private.sheet_visible(null::public.attempts, null::public.exams);
+    raise exception 'SECURITY FAIL: authenticated can call private.sheet_visible';
+  exception when insufficient_privilege then raise notice 'ok: sheet_visible is not callable by clients';
+  end;
   execute 'reset role';
 end $$;
 rollback;

@@ -47,6 +47,7 @@ JSON Schema: `schema/exam.schema.json`.
 | `shuffle_questions`, `shuffle_options` | | default false; the order is fixed per attempt |
 | `log_focus` | | default true; tab switches and blur events are logged and shown in the export |
 | `published` | | default false |
+| `equation_sheet` | | optional equation/reference sheet; see below. Omitting it on re-upload removes the sheet |
 
 Question fields: `id` (`^[A-Za-z0-9_-]{1,40}$`, unique in the exam, and the key used for marking), `type`, `prompt`, `marks` (default 1), optional `image` (a local path relative to the JSON file, uploaded to private storage), optional `explanation` (shown after release).
 
@@ -71,6 +72,7 @@ Generic example (not a real exam):
   "shuffle_questions": true,
   "shuffle_options": true,
   "log_focus": true,
+  "equation_sheet": {"title": "Formula sheet", "files": ["sheets/formulas.pdf"]},
   "questions": [
     {"id": "q1", "type": "mcq", "prompt": "Pick the fruit.", "options": ["Carrot", "Apple", "Leek"], "answer": "b", "marks": 1},
     {"id": "q2", "type": "multi", "prompt": "Pick the primes.", "options": ["2", "4", "5"], "answer": ["a", "c"], "marks": 2},
@@ -80,6 +82,20 @@ Generic example (not a real exam):
   ]
 }
 ```
+
+## Equation sheet (`equation_sheet`)
+Paths are relative to the exam JSON file, like question images. Each file is a `.pdf` (every page is used) or a page image (`.png`, `.jpg`, `.jpeg`, `.webp`). Up to 40 pages in total. Three accepted forms:
+```json
+"equation_sheet": "sheets/formulas.pdf"
+"equation_sheet": ["sheets/page1.png", "sheets/page2.png"]
+"equation_sheet": {"title": "Formula sheet", "files": ["sheets/formulas.pdf", "sheets/steel-table.png"], "dpi": 150}
+```
+`title` defaults to "Equation sheet". `dpi` (72–300, default 150) is the render resolution for PDF pages.
+
+- `bin/exam validate` checks that every file exists, that its type is supported, that PDFs are readable (`pdfinfo`), and that the page limit holds.
+- `bin/exam upload` renders each PDF page to PNG with `pdftoppm` (poppler-utils) and uploads every page to the private `exam-images` bucket as `<slug>/sheet-<hash>.png`, the same way question images are uploaded. It stores `{"title", "pages": [{"path", "w", "h"}]}` on the exam. `bin/exam list` shows the page count. `delete-exam` removes the pages along with the exam.
+- **Viewer:** the student gets an **Equation sheet** button next to the timer. It opens an in-page panel: a side panel on wide screens, full screen on phones. The panel stacks the pages, shows "Page x of n", zooms with − / % / + / Fit, pinch, double-tap or Ctrl+wheel, and mirrors the timer. PDFs are converted to images at upload time instead of embedding a PDF viewer: images render the same on every phone, need no PDF.js download, and the panel has no iframe, so opening it never fires a window blur or a tab switch. **Opening the sheet is not logged as leaving the page, and the timer keeps running.** The panel closes automatically on submit.
+- **Access:** the sheet's details come only from `get_attempt`, and only while that attempt is in progress (until the deadline plus 30 s grace), or from `get_results` after the attempt or exam is released. Pages are served by short-lived signed URLs. The storage RLS policy (`private.can_view_image`) only issues them to an allowlisted user who has an attempt on that exam that is currently in progress or released. During an attempt, links expire shortly after the deadline. Submitted-but-unreleased attempts, other users and anonymous visitors can't open the sheet. The intro page says when an exam has a sheet but doesn't show it.
 
 ## Mark file (`bin/exam mark`)
 ```json
@@ -106,3 +122,4 @@ The box can't reach Postgres directly. Add a new numbered file in `supabase/migr
 
 ## Tests
 `.venv/bin/python tools/e2e_test.py` runs the full REST test with a temporary user and cleans up after itself.
+`.venv/bin/python tools/sheet_test.py` tests equation-sheet access: in progress, submitted, released, other user, and anon. It uses a temporary exam and a temporary user, and removes both afterwards.

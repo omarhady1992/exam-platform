@@ -50,10 +50,116 @@ async function attachImage(container, path) {
   container.querySelector("img").addEventListener("click", () => modal(`<img src="${esc(url)}" alt="">`, { wide: true }));
 }
 
+// ------------------------------------------------------------------ equation sheet viewer
+// In-page panel (no iframe, no new tab), so opening it never blurs the window or hides the page:
+// the focus log and the exam timer are unaffected. Pages are PNGs in the private bucket, fetched with
+// short-lived signed URLs that storage RLS only issues while the attempt is open or results are released.
+const sheetUrls = new Map(); // path -> { url, exp }
+let sheetView = null;
+function closeSheet() { if (sheetView) sheetView.destroy(); }
+async function signSheet(pages, expiresIn) {
+  const now = Date.now(), need = pages.map((p) => p.path).filter((p) => !(sheetUrls.get(p)?.exp > now + 60000));
+  if (need.length) {
+    const { data, error } = await sb.storage.from("exam-images").createSignedUrls(need, expiresIn);
+    if (error) throw error;
+    (data || []).forEach((d) => d.signedUrl && !d.error && sheetUrls.set(d.path, { url: d.signedUrl, exp: now + expiresIn * 1000 }));
+  }
+  return pages.map((p) => sheetUrls.get(p.path)?.url || null);
+}
+function openSheet(sheet, { expiresIn = 3600, withTimer = false } = {}) {
+  if (sheetView) return closeSheet();
+  const pages = sheet.pages || [];
+  const root = document.getElementById("sheet-root");
+  root.innerHTML = `<section class="sheet" role="dialog" aria-label="${esc(sheet.title || "Equation sheet")}">
+    <div class="sheet-head">
+      <b class="sheet-title">${esc(sheet.title || "Equation sheet")}</b>
+      ${withTimer ? `<span class="timer sheet-timer" id="sheet-timer"></span>` : ""}
+      <div class="sheet-tools">
+        <button type="button" data-z="out" aria-label="Zoom out">−</button>
+        <button type="button" data-z="fit" class="pct" aria-label="Fit to width">100%</button>
+        <button type="button" data-z="in" aria-label="Zoom in">+</button>
+        <button type="button" class="sheet-close" aria-label="Close equation sheet">✕</button>
+      </div>
+    </div>
+    <div class="sheet-body" tabindex="0"><div class="sheet-pages">${pages.map((p, i) =>
+      `<div class="sheet-page" style="aspect-ratio:${Number(p.w) || 1240} / ${Number(p.h) || 1754}"><img alt="Page ${i + 1} of ${pages.length}" draggable="false" data-i="${i}"></div>`).join("")}
+    </div></div>
+    <div class="sheet-foot"><span id="sheet-pg">${pages.length} page${pages.length === 1 ? "" : "s"}</span><span class="muted">Pinch or double-tap to zoom</span></div>
+  </section>`;
+  document.body.classList.add("sheet-open");
+  const el = root.querySelector(".sheet"), body = el.querySelector(".sheet-body"), wrap = el.querySelector(".sheet-pages");
+  const pct = el.querySelector(".pct"), pg = el.querySelector("#sheet-pg");
+  let scale = 1;
+  const MIN = 1, MAX = 5;
+  function setScale(s, cx, cy) {
+    s = Math.min(MAX, Math.max(MIN, s));
+    const r = body.getBoundingClientRect();
+    cx = cx ?? r.width / 2; cy = cy ?? r.height / 2;
+    const x = (body.scrollLeft + cx) / scale, y = (body.scrollTop + cy) / scale;
+    scale = s; wrap.style.width = `${scale * 100}%`;
+    body.scrollLeft = x * scale - cx; body.scrollTop = y * scale - cy;
+    pct.textContent = `${Math.round(scale * 100)}%`;
+    body.classList.toggle("zoomed", scale > 1.01);
+  }
+  el.querySelectorAll("[data-z]").forEach((b) => (b.onclick = () => setScale(b.dataset.z === "fit" ? 1 : b.dataset.z === "in" ? scale * 1.25 : scale / 1.25)));
+  el.querySelector(".sheet-close").onclick = closeSheet;
+  // pinch zoom (two fingers) and double-tap; single-finger panning stays native scrolling
+  let pinch = null, lastTap = 0;
+  const mid = (t) => { const r = body.getBoundingClientRect(); return [(t[0].clientX + t[1].clientX) / 2 - r.left, (t[0].clientY + t[1].clientY) / 2 - r.top]; };
+  const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+  body.addEventListener("touchstart", (e) => {
+    if (e.touches.length === 2) { pinch = { d: dist(e.touches), s: scale }; e.preventDefault(); }
+    else if (e.touches.length === 1) {
+      const now = Date.now(), t = e.touches[0], r = body.getBoundingClientRect();
+      if (now - lastTap < 300) { e.preventDefault(); setScale(scale > 1.01 ? 1 : 2.5, t.clientX - r.left, t.clientY - r.top); lastTap = 0; } else lastTap = now;
+    }
+  }, { passive: false });
+  body.addEventListener("touchmove", (e) => {
+    if (pinch && e.touches.length === 2) { e.preventDefault(); const [cx, cy] = mid(e.touches); setScale(pinch.s * dist(e.touches) / pinch.d, cx, cy); }
+  }, { passive: false });
+  body.addEventListener("touchend", (e) => { if (e.touches.length < 2) pinch = null; });
+  body.addEventListener("dblclick", (e) => { const r = body.getBoundingClientRect(); setScale(scale > 1.01 ? 1 : 2.5, e.clientX - r.left, e.clientY - r.top); });
+  body.addEventListener("wheel", (e) => { if (e.ctrlKey || e.metaKey) { e.preventDefault(); const r = body.getBoundingClientRect(); setScale(scale * Math.exp(-e.deltaY / 300), e.clientX - r.left, e.clientY - r.top); } }, { passive: false });
+  // drag to pan with a mouse when zoomed
+  let drag = null;
+  body.addEventListener("mousedown", (e) => { if (scale > 1.01 && e.button === 0) { drag = { x: e.clientX, y: e.clientY, l: body.scrollLeft, t: body.scrollTop }; e.preventDefault(); } });
+  const onMove = (e) => { if (drag) { body.scrollLeft = drag.l - (e.clientX - drag.x); body.scrollTop = drag.t - (e.clientY - drag.y); } };
+  const onUp = () => (drag = null);
+  const onKey = (e) => {
+    if (e.key === "Escape") closeSheet();
+    else if (!/INPUT|TEXTAREA/.test(document.activeElement?.tagName || "")) {
+      if (e.key === "+" || e.key === "=") setScale(scale * 1.25); else if (e.key === "-") setScale(scale / 1.25); else if (e.key === "0") setScale(1);
+    }
+  };
+  window.addEventListener("mousemove", onMove); window.addEventListener("mouseup", onUp); document.addEventListener("keydown", onKey);
+  const onScroll = () => {
+    const imgs = wrap.querySelectorAll(".sheet-page"), mid = body.scrollTop + body.clientHeight / 2;
+    let n = 1; imgs.forEach((p, i) => { if (p.offsetTop <= mid) n = i + 1; });
+    if (pages.length > 1) pg.textContent = `Page ${n} of ${pages.length}`;
+  };
+  body.addEventListener("scroll", onScroll, { passive: true });
+  sheetView = {
+    destroy() {
+      window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); document.removeEventListener("keydown", onKey);
+      root.innerHTML = ""; document.body.classList.remove("sheet-open"); sheetView = null;
+      document.querySelectorAll("[data-sheet-btn]").forEach((b) => b.setAttribute("aria-expanded", "false"));
+    },
+  };
+  document.querySelectorAll("[data-sheet-btn]").forEach((b) => b.setAttribute("aria-expanded", "true"));
+  onScroll();
+  signSheet(pages, Math.round(expiresIn)).then((urls) => {
+    if (!el.isConnected) return;
+    let bad = 0;
+    wrap.querySelectorAll("img").forEach((img, i) => { if (urls[i]) img.src = urls[i]; else { bad++; img.closest(".sheet-page").classList.add("missing"); } });
+    if (bad) toast(bad === pages.length ? "The equation sheet isn't available right now." : `${bad} page(s) could not be loaded.`);
+  }, () => { if (el.isConnected) { wrap.innerHTML = `<div class="error" style="margin:14px">The equation sheet isn't available right now.</div>`; } });
+}
+
 // ------------------------------------------------------------------ router
 async function render() {
   cleanup.forEach((f) => { try { f(); } catch {} }); cleanup = [];
   document.getElementById("modal-root").innerHTML = "";
+  closeSheet();
   setNav();
   const h = location.hash || "#/";
   const [, page, arg] = h.match(/^#\/([^/]*)\/?(.*)$/) || [];
@@ -213,6 +319,7 @@ async function pageExam(slug) {
       <li>Answers save automatically. The exam submits itself when time runs out.</li>
       ${e.closes_at ? `<li>If the exam closes before your time is up, it ends at the closing time.</li>` : ""}
       ${e.log_focus ? `<li>Switching tabs or leaving the page is recorded.</li>` : ""}
+      ${e.has_equation_sheet ? `<li>An equation sheet is available during the exam — use the <b>Equation sheet</b> button next to the timer. Opening it doesn't stop the clock.</li>` : ""}
     </ul>
     <div id="err"></div>
     <div class="row">
@@ -255,6 +362,7 @@ async function pageAttempt(id) {
     <div class="exambar"><div class="inner">
       <div style="min-width:0"><div class="small" style="color:#b9cbe6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(att.exam.title)}</div>
       <div class="savestate" id="save" style="text-align:left">All answers saved</div></div>
+      ${att.equation_sheet ? `<button type="button" class="sheetbtn" id="sheetbtn" data-sheet-btn aria-expanded="false" title="Open the equation sheet (the timer keeps running)">📐<span><span class="lg">Equation </span>sheet</span></button>` : ""}
       <div style="text-align:right"><div class="timer" id="timer">--:--</div><div class="savestate">ends ${esc(fmtCairo(att.deadline, { weekday: undefined, year: undefined, day: undefined, month: undefined }))}</div></div>
     </div></div>
     ${att.exam.log_focus ? `<div class="notice small">Switching tabs or leaving this page is recorded.</div>` : ""}
@@ -346,7 +454,7 @@ async function pageAttempt(id) {
 
   async function submit(reason) {
     if (finished) return; finished = true;
-    clearInterval(tick);
+    clearInterval(tick); closeSheet();
     setSave("Submitting…");
     await flushAll();
     for (let i = 0; i < 5; i++) {
@@ -377,8 +485,16 @@ async function pageAttempt(id) {
     const s = Math.ceil(ms / 1000), h = Math.floor(s / 3600), mm = Math.floor((s % 3600) / 60), ss = s % 60;
     tEl.textContent = (h ? `${h}:${String(mm).padStart(2, "0")}` : String(mm).padStart(2, "0")) + ":" + String(ss).padStart(2, "0");
     tEl.className = "timer" + (ms < 60000 ? " crit" : ms < 300000 ? " warn" : "");
+    const st = document.getElementById("sheet-timer");
+    if (st) { st.textContent = tEl.textContent; st.className = tEl.className + " sheet-timer"; }
   }, 250);
   cleanup.push(() => clearInterval(tick));
+  const sheetBtn = document.getElementById("sheetbtn");
+  if (sheetBtn) sheetBtn.onclick = () => openSheet(att.equation_sheet, {
+    withTimer: true,
+    // signed links only live a little past the deadline
+    expiresIn: Math.min(3600, Math.max(120, remaining() / 1000 + 120)),
+  });
 
   // focus logging
   if (att.exam.log_focus) {
@@ -436,7 +552,8 @@ async function pageResults(id) {
       <div><h1 style="margin:0">${esc(r.exam.title)}</h1><div><b>${num(r.total_score)}</b> / ${num(r.max_score)} marks</div>
       <div class="small muted">Submitted ${esc(fmtCairo(r.submitted_at))}${r.submit_reason === "time_expired" || r.submit_reason === "timer" ? " · time ran out" : ""}</div>
       ${r.pending_manual ? `<div class="small" style="color:var(--amber)">${r.pending_manual} answer(s) still being marked</div>` : ""}</div></div>
-      ${r.feedback ? `<div class="fb"><b>Mentor feedback</b><br>${rich(r.feedback)}</div>` : ""}</div>
+      ${r.feedback ? `<div class="fb"><b>Mentor feedback</b><br>${rich(r.feedback)}</div>` : ""}
+      ${r.equation_sheet ? `<div class="row" style="margin-top:12px"><button type="button" class="btn secondary" id="sheetbtn" data-sheet-btn aria-expanded="false">📐 ${esc(r.equation_sheet.title || "Equation sheet")}</button></div>` : ""}</div>
     ${r.questions.map((q) => {
       const cls = q.pending ? "" : q.is_correct === true ? "ok" : q.is_correct === false ? "bad" : "part";
       const badge = q.pending ? `<span class="badge amber">Awaiting marking</span>` : q.is_correct === true ? `<span class="badge green">Correct</span>` : q.is_correct === false ? `<span class="badge red">Incorrect</span>` : `<span class="badge amber">Partial</span>`;
@@ -452,6 +569,8 @@ async function pageResults(id) {
     }).join("")}
     <a class="btn secondary" href="#/">Back to exams</a>`;
   app.querySelectorAll("[data-img]").forEach((d) => d.dataset.img && attachImage(d, d.dataset.img));
+  const sb2 = app.querySelector("#sheetbtn");
+  if (sb2) sb2.onclick = () => openSheet(r.equation_sheet);
 }
 
 // ------------------------------------------------------------------ boot

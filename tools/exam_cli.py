@@ -4,7 +4,7 @@
 Reads SUPABASE_SERVICE_ROLE_KEY (required) and SUPABASE_URL (optional) from the environment.
 Never prints secrets. Times are shown in Cairo time (Africa/Cairo).
 """
-import argparse, hashlib, json, mimetypes, os, re, sys
+import argparse, hashlib, json, mimetypes, os, re, shutil, struct, subprocess, sys, tempfile
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -50,20 +50,112 @@ def rpc(name, **params):
     return r.json() if r.text else None
 
 
-def upload_image(local: Path, slug: str) -> str:
+def upload_image(local: Path, slug: str, prefix: str = "") -> str:
     url, key = _cfg()
     data = local.read_bytes()
     ext = local.suffix.lower() or ".bin"
     if ext not in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"):
         raise CliError(f"Unsupported image type: {local.name}")
     # Content-hash name: does not leak the original (possibly answer-revealing) filename.
-    path = f"{slug}/{hashlib.sha256(data).hexdigest()[:20]}{ext}"
+    path = f"{slug}/{prefix}{hashlib.sha256(data).hexdigest()[:20]}{ext}"
     ctype = mimetypes.guess_type(local.name)[0] or "application/octet-stream"
     r = requests.post(f"{url}/storage/v1/object/{BUCKET}/{path}",
                       headers=_headers(key, {"Content-Type": ctype, "x-upsert": "true"}), data=data, timeout=120)
     if r.status_code >= 300:
         raise CliError(f"Image upload failed for {local}: {r.status_code} {r.text[:200]}")
     return path
+
+
+# ------------------------------------------------------------------ equation sheet
+SHEET_IMAGE_EXT = (".png", ".jpg", ".jpeg", ".webp")
+SHEET_MAX_PAGES = 40
+SHEET_DEFAULT_DPI = 150
+
+
+def sheet_spec(doc):
+    """Normalise the equation_sheet field to (title, [file paths], dpi) or None."""
+    v = doc.get("equation_sheet")
+    if v in (None, "", []):
+        return None
+    if isinstance(v, str):
+        return "Equation sheet", [v], SHEET_DEFAULT_DPI
+    if isinstance(v, list):
+        return "Equation sheet", list(v), SHEET_DEFAULT_DPI
+    return v.get("title") or "Equation sheet", list(v.get("files") or []), int(v.get("dpi") or SHEET_DEFAULT_DPI)
+
+
+def pdf_pages(p: Path):
+    if not shutil.which("pdfinfo"):
+        raise CliError("pdfinfo/pdftoppm (poppler-utils) are needed for PDF equation sheets")
+    r = subprocess.run(["pdfinfo", str(p)], capture_output=True, text=True)
+    m = re.search(r"^Pages:\s+(\d+)", r.stdout, re.M)
+    if r.returncode != 0 or not m:
+        raise CliError(f"not a readable PDF: {p}")
+    return int(m.group(1))
+
+
+def validate_sheet(doc, base: Path):
+    spec = sheet_spec(doc)
+    if not spec:
+        return []
+    errors, pages = [], 0
+    _, files, _ = spec
+    if not files:
+        errors.append("equation_sheet: no files listed")
+    for f in files:
+        p = (base / f).expanduser()
+        ext = p.suffix.lower()
+        if not p.is_file():
+            errors.append(f"equation_sheet: file not found: {p}")
+        elif ext == ".pdf":
+            try:
+                pages += pdf_pages(p)
+            except CliError as e:
+                errors.append(f"equation_sheet: {e}")
+        elif ext in SHEET_IMAGE_EXT:
+            pages += 1
+        else:
+            errors.append(f"equation_sheet: {p.name}: use a .pdf or .png/.jpg/.webp page image")
+    if pages > SHEET_MAX_PAGES:
+        errors.append(f"equation_sheet: {pages} pages; the limit is {SHEET_MAX_PAGES}")
+    return errors
+
+
+def image_size(p: Path):
+    data = p.read_bytes()[:32]
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return struct.unpack(">II", data[16:24])
+    try:
+        from PIL import Image
+        with Image.open(p) as im:
+            return im.size
+    except Exception:
+        return None, None
+
+
+def build_sheet(doc, base: Path, slug: str, upload=True):
+    """Render PDFs to PNG pages, upload every page to private storage and return the DB value."""
+    spec = sheet_spec(doc)
+    if not spec:
+        return None
+    title, files, dpi = spec
+    pages = []
+    with tempfile.TemporaryDirectory() as tmp:
+        for i, f in enumerate(files):
+            p = (base / f).expanduser()
+            if p.suffix.lower() == ".pdf":
+                out = Path(tmp) / f"f{i}"
+                r = subprocess.run(["pdftoppm", "-r", str(dpi), "-png", str(p), str(out)], capture_output=True, text=True)
+                if r.returncode != 0:
+                    raise CliError(f"could not render {p.name}: {r.stderr.strip()[:200]}")
+                imgs = sorted(Path(tmp).glob(f"f{i}-*.png"), key=lambda x: int(x.stem.rsplit("-", 1)[1]))
+            else:
+                imgs = [p]
+            for img in imgs:
+                w, h = image_size(img)
+                path = upload_image(img, slug, prefix="sheet-") if upload else "(local)"
+                pages.append({"path": path, "w": w, "h": h})
+    return {"title": title, "pages": pages}
 
 
 # ------------------------------------------------------------------ time helpers
@@ -146,6 +238,7 @@ def validate(doc, base: Path):
             errors.append("closes_at must be after opens_at")
     except CliError as e:
         errors.append(str(e))
+    errors += validate_sheet(doc, base)
     return errors
 
 
@@ -169,6 +262,7 @@ def normalise(doc, base: Path, slug_for_images: str, upload=True):
             nq["image_path"] = upload_image((base / q["image"]).expanduser(), slug_for_images) if upload else "(local)"
         qs.append(nq)
     out["questions"] = qs
+    out["equation_sheet"] = build_sheet(doc, base, slug_for_images, upload)
     return out
 
 
@@ -190,7 +284,12 @@ def cmd_validate(a):
     if errs:
         raise CliError("Validation failed:\n  " + "\n  ".join(errs))
     total = sum(q.get("marks", 1) for q in doc["questions"])
-    print(f"OK: {doc['slug']} - {len(doc['questions'])} questions, {total:g} marks, {doc['time_limit_minutes']} min")
+    spec = sheet_spec(doc)
+    sheet = ""
+    if spec:
+        n = sum(pdf_pages((base / f).expanduser()) if f.lower().endswith(".pdf") else 1 for f in spec[1])
+        sheet = f", equation sheet {n} page(s)"
+    print(f"OK: {doc['slug']} - {len(doc['questions'])} questions, {total:g} marks, {doc['time_limit_minutes']} min{sheet}")
 
 
 def cmd_upload(a):
@@ -205,7 +304,8 @@ def cmd_upload(a):
     payload = normalise(doc, base, doc["slug"])
     res = rpc("admin_upsert_exam", p=payload, p_force=a.force)
     state = "PUBLISHED (visible to Omar)" if res["published"] else "unpublished (hidden)"
-    print(f"Uploaded {res['slug']}: {res['questions']} questions, {state}")
+    sheet = f", equation sheet {res['equation_sheet_pages']} page(s)" if res.get("equation_sheet_pages") else ""
+    print(f"Uploaded {res['slug']}: {res['questions']} questions{sheet}, {state}")
     if res.get("had_attempts"):
         print("note: exam already had attempts; submitted attempts were re-marked with the new key")
     print(f"Omar's link: {SITE_URL}#/exam/{res['slug']}")
@@ -228,7 +328,8 @@ def cmd_list(a):
         print(f"{r['slug']}\n  {r['title']}\n  published={r['published']}  released={r['results_released']}  "
               f"{r['questions']} q / {r['total_marks']:g} marks / {r['time_limit_minutes']} min  attempts allowed={r['attempts_allowed']}\n"
               f"  opens {fmt(r['opens_at'])}  closes {fmt(r['closes_at'])}\n"
-              f"  attempts: {r['attempts']} ({r['submitted']} submitted), short answers to mark: {r['pending_manual']}")
+              f"  attempts: {r['attempts']} ({r['submitted']} submitted), short answers to mark: {r['pending_manual']}"
+              + (f"\n  equation sheet: {r['equation_sheet_pages']} page(s)" if r.get("equation_sheet_pages") else ""))
 
 
 def cmd_export(a):
