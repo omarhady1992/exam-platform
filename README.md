@@ -8,3 +8,6 @@ A personal timed exam and quiz site: a static frontend on GitHub Pages with Supa
 - `schema/exam.schema.json`: the exam file format. See `STUDY_MENTOR.md`.
 
 This repo has no answer keys and no secrets. `site/config.js` contains only the public anon key.
+
+Admin Examiner UI (Omar): open `#/examiner` after signing in with an admin account.
+Finish emails go to Omar; Study Mentor is woken via `finish_notifications` — see `READY_FOR_ROUTINE.md` and `docs/FINISH_EMAIL.md`.

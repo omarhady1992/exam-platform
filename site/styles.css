@@ -113,3 +113,9 @@ textarea{min-height:150px;resize:vertical}
   .sheet{width:100%;left:0;border-left:0}
   body.sheet-open{overflow:hidden}
 }
+
+/* examiner */
+main.wide, body.examiner main{max-width:960px}
+.qedit{border-left:4px solid var(--teal)}
+.qedit textarea{min-height:72px}
+#topnav a.active{background:var(--navy-2);color:#fff}

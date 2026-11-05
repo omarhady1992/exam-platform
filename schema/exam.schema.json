@@ -4,66 +4,344 @@
   "title": "Exam definition",
   "type": "object",
   "additionalProperties": false,
-  "required": ["slug", "title", "time_limit_minutes", "questions"],
+  "required": [
+    "slug",
+    "title",
+    "time_limit_minutes",
+    "questions"
+  ],
   "properties": {
-    "$schema": {"type": "string"},
-    "slug": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,80}$", "description": "Unique id; re-uploading the same slug updates the exam."},
-    "title": {"type": "string", "minLength": 1},
-    "instructions": {"type": "string"},
-    "time_limit_minutes": {"type": "integer", "minimum": 1, "maximum": 1440},
-    "opens_at": {"type": ["string", "null"], "description": "ISO date-time. Without an offset it is read as Cairo time (Africa/Cairo)."},
-    "closes_at": {"type": ["string", "null"], "description": "ISO date-time. Without an offset it is read as Cairo time. Attempts end at the earlier of time limit and closes_at."},
-    "attempts_allowed": {"type": "integer", "minimum": 1, "default": 1},
-    "shuffle_questions": {"type": "boolean", "default": false},
-    "shuffle_options": {"type": "boolean", "default": false},
-    "log_focus": {"type": "boolean", "default": true, "description": "Log tab switches / leaving the page."},
-    "published": {"type": "boolean", "description": "Optional. If omitted, the current published state is kept (new exams start unpublished)."},
+    "$schema": {
+      "type": "string"
+    },
+    "slug": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{1,80}$",
+      "description": "Unique id; re-uploading the same slug updates the exam."
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "instructions": {
+      "type": "string"
+    },
+    "time_limit_minutes": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1440
+    },
+    "opens_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "ISO date-time. Without an offset it is read as Cairo time (Africa/Cairo)."
+    },
+    "closes_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "ISO date-time. Without an offset it is read as Cairo time. Attempts end at the earlier of time limit and closes_at."
+    },
+    "attempts_allowed": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 1
+    },
+    "shuffle_questions": {
+      "type": "boolean",
+      "default": false
+    },
+    "shuffle_options": {
+      "type": "boolean",
+      "default": false
+    },
+    "log_focus": {
+      "type": "boolean",
+      "default": true,
+      "description": "Log tab switches / leaving the page."
+    },
+    "published": {
+      "type": "boolean",
+      "description": "Optional. If omitted, the current published state is kept (new exams start unpublished)."
+    },
     "equation_sheet": {
       "description": "Optional equation/reference sheet the student can open in a side panel during the attempt and after results are released. One file, a list of files (pages in order), or an object with a title. Paths are relative to this JSON file.",
       "oneOf": [
-        {"$ref": "#/$defs/sheet_file"},
-        {"type": "array", "minItems": 1, "maxItems": 40, "items": {"$ref": "#/$defs/sheet_file"}},
-        {"type": "object", "additionalProperties": false, "required": ["files"], "properties": {
-          "title": {"type": "string", "minLength": 1, "maxLength": 120, "description": "Panel title (default 'Equation sheet')."},
-          "files": {"type": "array", "minItems": 1, "maxItems": 40, "items": {"$ref": "#/$defs/sheet_file"}},
-          "dpi": {"type": "integer", "minimum": 72, "maximum": 300, "description": "Render resolution for PDF pages (default 150)."}
-        }}
+        {
+          "$ref": "#/$defs/sheet_file"
+        },
+        {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 40,
+          "items": {
+            "$ref": "#/$defs/sheet_file"
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "files"
+          ],
+          "properties": {
+            "title": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120,
+              "description": "Panel title (default 'Equation sheet')."
+            },
+            "files": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 40,
+              "items": {
+                "$ref": "#/$defs/sheet_file"
+              }
+            },
+            "dpi": {
+              "type": "integer",
+              "minimum": 72,
+              "maximum": 300,
+              "description": "Render resolution for PDF pages (default 150)."
+            }
+          }
+        }
       ]
     },
-    "questions": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/question"}}
+    "questions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/question"
+      }
+    },
+    "notify_emails": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "description": "Optional per-exam finish-notification recipients. Null/omitted keeps existing (CLI) or inherits the global default (ohady1992@gmail.com). Study Mentor is woken via finish_notifications, not email.",
+      "items": {
+        "type": "string",
+        "format": "email"
+      }
+    }
   },
   "$defs": {
-    "sheet_file": {"type": "string", "pattern": "(?i)\\.(pdf|png|jpe?g|webp)$", "description": "A .pdf (every page is used) or a page image (.png/.jpg/.webp)."},
+    "sheet_file": {
+      "type": "string",
+      "pattern": "(?i)\\.(pdf|png|jpe?g|webp)$",
+      "description": "A .pdf (every page is used) or a page image (.png/.jpg/.webp)."
+    },
     "option": {
       "oneOf": [
-        {"type": "string", "minLength": 1},
-        {"type": "object", "additionalProperties": false, "required": ["id", "text"],
-         "properties": {"id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,20}$"}, "text": {"type": "string", "minLength": 1}}}
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "text"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,20}$"
+            },
+            "text": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
       ]
     },
     "question": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "type", "prompt"],
+      "required": [
+        "id",
+        "type",
+        "prompt"
+      ],
       "properties": {
-        "id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,40}$", "description": "Stable question id within the exam (e.g. q1). Used by mark files."},
-        "type": {"enum": ["mcq", "multi", "tf", "short", "numeric"]},
-        "prompt": {"type": "string", "minLength": 1},
-        "marks": {"type": "number", "minimum": 0, "default": 1},
-        "image": {"type": "string", "description": "Local image path (relative to the JSON file). Uploaded to private storage."},
-        "options": {"type": "array", "minItems": 2, "items": {"$ref": "#/$defs/option"}},
-        "answer": {"description": "mcq: option id; multi: array of option ids; tf: true/false; numeric: number; short: model answer text (optional)"},
-        "tolerance_abs": {"type": ["number", "null"], "minimum": 0},
-        "tolerance_pct": {"type": ["number", "null"], "minimum": 0},
-        "unit": {"type": ["string", "null"]},
-        "explanation": {"type": ["string", "null"], "description": "Shown to the student after results are released."}
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,40}$",
+          "description": "Stable question id within the exam (e.g. q1). Used by mark files."
+        },
+        "type": {
+          "enum": [
+            "mcq",
+            "multi",
+            "tf",
+            "short",
+            "numeric"
+          ]
+        },
+        "prompt": {
+          "type": "string",
+          "minLength": 1
+        },
+        "marks": {
+          "type": "number",
+          "minimum": 0,
+          "default": 1
+        },
+        "image": {
+          "type": "string",
+          "description": "Local image path (relative to the JSON file). Uploaded to private storage."
+        },
+        "options": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "$ref": "#/$defs/option"
+          }
+        },
+        "answer": {
+          "description": "mcq: option id; multi: array of option ids; tf: true/false; numeric: number; short: model answer text (optional)"
+        },
+        "tolerance_abs": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "tolerance_pct": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "unit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "explanation": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Shown to the student after results are released."
+        }
       },
       "allOf": [
-        {"if": {"properties": {"type": {"const": "mcq"}}}, "then": {"required": ["options", "answer"], "properties": {"answer": {"type": "string"}}}},
-        {"if": {"properties": {"type": {"const": "multi"}}}, "then": {"required": ["options", "answer"], "properties": {"answer": {"type": "array", "minItems": 1, "items": {"type": "string"}}}}},
-        {"if": {"properties": {"type": {"const": "tf"}}}, "then": {"required": ["answer"], "properties": {"answer": {"type": "boolean"}, "options": false}}},
-        {"if": {"properties": {"type": {"const": "numeric"}}}, "then": {"required": ["answer"], "properties": {"answer": {"type": "number"}, "options": false}}},
-        {"if": {"properties": {"type": {"const": "short"}}}, "then": {"properties": {"answer": {"type": ["string", "null"]}, "options": false}}}
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "mcq"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "options",
+              "answer"
+            ],
+            "properties": {
+              "answer": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "multi"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "options",
+              "answer"
+            ],
+            "properties": {
+              "answer": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "tf"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "answer"
+            ],
+            "properties": {
+              "answer": {
+                "type": "boolean"
+              },
+              "options": false
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "numeric"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "answer"
+            ],
+            "properties": {
+              "answer": {
+                "type": "number"
+              },
+              "options": false
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "short"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "answer": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "options": false
+            }
+          }
+        }
       ]
     }
   }

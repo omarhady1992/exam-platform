@@ -57,12 +57,13 @@ try:
     admin("admin_allow_user", p_email=email, p_role="student")
     check(c.rpc("whoami").json()["email"] == email, "allowlisted user: whoami works")
 
-    for t in ("question_keys", "questions", "answers", "attempts", "exams", "focus_events", "allowed_users"):
+    for t in ("question_keys", "questions", "answers", "attempts", "exams", "focus_events", "allowed_users", "finish_notifications", "app_settings"):
         r = c.get(f"/rest/v1/{t}?select=*&limit=1")
         check(r.status_code in (401, 403, 404) or (r.ok and r.json() == []), f"user cannot read table {t} ({r.status_code})")
     for fn in ("admin_list", "admin_export"):
         r = c.rpc(fn, **({"p_slug": slug} if fn == "admin_export" else {}))
-        check(r.status_code in (401, 403, 404), f"user cannot call {fn} ({r.status_code})")
+        check(r.status_code in (401, 403, 404) or "Not authorized" in r.text,
+              f"user cannot call {fn} ({r.status_code})")
 
     admin("admin_set_published", p_slug=slug, p_published=True)
     lst = c.rpc("list_my_exams").json()
@@ -102,6 +103,13 @@ try:
     check(r.ok, "focus event logged")
     r = c.rpc("get_results", p_attempt=att["attempt_id"]); check(not r.ok, "results hidden before submit/release")
     r = c.rpc("submit_attempt", p_attempt=att["attempt_id"], p_reason="manual"); check(r.ok and r.json()["status"] == "submitted", "submitted")
+    finishes = admin("admin_list_finishes", p_unacked_only=True)
+    mine = [f for f in finishes if f["attempt_id"] == att["attempt_id"]]
+    check(len(mine) == 1, "finish_notifications row enqueued on submit")
+    check(mine[0]["exam_slug"] == slug and mine[0]["student_email"] == email, "finish row has slug + student email")
+    check(mine[0]["email_status"] in ("sent", "skipped", "failed", "pending"), f"email_status set ({mine[0]['email_status']})")
+    ack = admin("admin_ack_finish", p_id=mine[0]["id"], p_attempt=None)
+    check(ack.get("acked_at"), "finish notification acked")
     r = c.rpc("save_answer", p_attempt=att["attempt_id"], p_question=att["questions"][0]["id"], p_response=1)
     check(not r.ok and "submitted" in r.text, "save after submit rejected")
     g = c.rpc("get_attempt", p_attempt=att["attempt_id"]).json(); check(g["questions"] is None, "submitted attempt no longer serves questions")

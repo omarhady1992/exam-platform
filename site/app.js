@@ -1,4 +1,5 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
+import { createExaminer } from "./examiner.js?v=1793870000";
 
 const CFG = window.EXAM_CONFIG || {};
 const TZ = CFG.TIME_ZONE || "Africa/Cairo";
@@ -30,8 +31,18 @@ function modal(html, { wide = false, onClose } = {}) {
   root.querySelector(".backdrop").addEventListener("click", (e) => { if (e.target.classList.contains("backdrop")) close(); });
   return { el: root.querySelector(".modal"), close };
 }
+let isAdmin = false;
 function setNav() {
-  nav.innerHTML = session ? `<a href="#/">Exams</a><a href="#/account">Account</a>` : "";
+  if (!session) { nav.innerHTML = ""; return; }
+  nav.innerHTML = `<a href="#/">Exams</a>${isAdmin ? `<a href="#/examiner">Examiner</a>` : ""}<a href="#/account">Account</a>`;
+}
+async function refreshAdminFlag() {
+  if (!session || !sb) { isAdmin = false; setNav(); return; }
+  try {
+    const { data } = await sb.rpc("admin_is_admin");
+    isAdmin = !!(data && data.admin);
+  } catch { isAdmin = false; }
+  setNav();
 }
 const imgCache = new Map();
 async function signedImage(path) {
@@ -171,6 +182,7 @@ async function render() {
       case "forgot": return pageForgot();
       case "set-password": return pageSetPassword();
       case "account": return pageAccount();
+      case "examiner": return pageExaminer(arg);
       case "exam": return pageExam(decodeURIComponent(arg));
       case "attempt": return pageAttempt(arg);
       case "results": return pageResults(arg);
@@ -573,6 +585,32 @@ async function pageResults(id) {
   if (sb2) sb2.onclick = () => openSheet(r.equation_sheet);
 }
 
+
+// ------------------------------------------------------------------ examiner (admin)
+async function pageExaminer(arg) {
+  app.innerHTML = `<div class="center muted">Loading examiner…</div>`;
+  try {
+    const ex = createExaminer({
+      rpc, esc, rich, fmtCairo, num, toast, errMsg, go, sb, signedImage, modal,
+    });
+    const parts = (arg || "").split("/").filter(Boolean);
+    // #/examiner | #/examiner/edit | #/examiner/edit/<slug>
+    if (parts[0] === "edit") {
+      await ex.open(app, parts[1] || "");
+    } else {
+      await ex.open(app);
+    }
+    isAdmin = true; setNav();
+  } catch (e) {
+    if (e?.code === "NOT_ADMIN" || /Not authorized|only available to admin/i.test(errMsg(e))) {
+      app.innerHTML = `<div class="card narrow"><h1>Examiner</h1><p class="muted">This area is for admin accounts only.</p><a class="btn" href="#/">Back to exams</a></div>`;
+      isAdmin = false; setNav();
+      return;
+    }
+    app.innerHTML = `<div class="card"><div class="error">${esc(errMsg(e))}</div><a class="btn secondary" href="#/">Back</a></div>`;
+  }
+}
+
 // ------------------------------------------------------------------ boot
 async function boot() {
   if (!CFG.SUPABASE_URL || !CFG.SUPABASE_ANON_KEY) {
@@ -595,8 +633,10 @@ async function boot() {
   }
   const { data } = await sb.auth.getSession();
   session = data.session;
-  sb.auth.onAuthStateChange((ev, s) => {
-    const had = !!session; session = s; setNav();
+  await refreshAdminFlag();
+  sb.auth.onAuthStateChange(async (ev, s) => {
+    const had = !!session; session = s;
+    await refreshAdminFlag();
     if (ev === "PASSWORD_RECOVERY") go("#/set-password");
     if (ev === "SIGNED_OUT" && had) go("#/login");
   });

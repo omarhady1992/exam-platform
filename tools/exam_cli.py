@@ -249,6 +249,8 @@ def normalise(doc, base: Path, slug_for_images: str, upload=True):
     out["closes_at"] = parse_cairo(doc.get("closes_at"))
     if "published" in doc:
         out["published"] = doc["published"]
+    if "notify_emails" in doc:
+        out["notify_emails"] = doc["notify_emails"]
     qs = []
     for q in doc["questions"]:
         nq = {"id": q["id"], "type": q["type"], "prompt": q["prompt"], "marks": q.get("marks", 1),
@@ -380,6 +382,54 @@ def cmd_delete_exam(a):
         print(f"removed {len(names)} image(s)" if d.ok else f"warning: image cleanup failed ({d.status_code})")
 
 
+def cmd_finishes(a):
+    rows = rpc("admin_list_finishes", p_unacked_only=not a.all)
+    rows = cairo_times(rows)
+    if a.json:
+        print(json.dumps(rows, indent=2, ensure_ascii=False)); return
+    if not rows:
+        print("No finish notifications" + (" (unacked)" if not a.all else "") + ".")
+        return
+    for n in rows:
+        ack = f"acked {fmt(n.get('acked_at'))}" if n.get("acked_at") else "UNACKED"
+        print(f"{n['id']}\n  {n['exam_slug']} · {n.get('student_email') or '?'} · {ack}\n"
+              f"  submitted {fmt(n.get('submitted_at'))} reason={n.get('submit_reason')}\n"
+              f"  pending_manual={n.get('pending_manual')} auto={n.get('auto_score')}/{n.get('max_score')}\n"
+              f"  email_status={n.get('email_status')} to={n.get('email_to')}\n"
+              f"  {n.get('commands', {}).get('export')}\n"
+              f"  {n.get('commands', {}).get('mark')}\n"
+              f"  {n.get('commands', {}).get('release')}")
+
+
+def cmd_ack(a):
+    kwargs = {}
+    if a.id:
+        kwargs["p_id"] = a.id
+    if a.attempt:
+        kwargs["p_attempt"] = a.attempt
+    if not kwargs:
+        raise CliError("Provide --id <finish_id> or --attempt <attempt_id>")
+    # PostgREST needs both args present for defaults; send nulls for unused
+    res = rpc("admin_ack_finish", p_id=kwargs.get("p_id"), p_attempt=kwargs.get("p_attempt"))
+    print(json.dumps(res))
+
+
+def cmd_notify_emails(a):
+    if a.set is not None or a.clear_exam:
+        if a.clear_exam:
+            if not a.slug:
+                raise CliError("--clear-exam needs --slug")
+            res = rpc("admin_set_notify_emails", p_emails=None, p_slug=a.slug)
+        else:
+            emails = [x.strip() for x in a.set.split(",") if x.strip()]
+            res = rpc("admin_set_notify_emails", p_emails=emails, p_slug=a.slug)
+        print(json.dumps(res, indent=2))
+        return
+    res = rpc("admin_get_notify_emails", p_slug=a.slug)
+    print(json.dumps(res, indent=2))
+
+
+
 def cmd_allow_user(a):
     print(json.dumps(rpc("admin_allow_user", p_email=a.email, p_role=a.role)))
 
@@ -408,6 +458,15 @@ def main(argv=None):
     s = sub.add_parser("delete-exam"); s.add_argument("slug"); s.add_argument("--yes", action="store_true"); s.set_defaults(fn=cmd_delete_exam)
     s = sub.add_parser("allow-user", help="allow an existing auth user to use the site")
     s.add_argument("email"); s.add_argument("--role", default="student", choices=["student", "admin"]); s.set_defaults(fn=cmd_allow_user)
+    s = sub.add_parser("finishes", help="list finish_notifications (Study Mentor wake queue)")
+    s.add_argument("--all", action="store_true", help="include acked"); s.add_argument("--json", action="store_true"); s.set_defaults(fn=cmd_finishes)
+    s = sub.add_parser("ack", help="acknowledge a finish notification")
+    s.add_argument("--id", help="finish_notifications.id"); s.add_argument("--attempt", help="attempt uuid"); s.set_defaults(fn=cmd_ack)
+    s = sub.add_parser("notify-emails", help="get/set finish email recipients (Omar only; not Study Mentor)")
+    s.add_argument("--slug", help="exam slug; omit for global default")
+    s.add_argument("--set", help="comma-separated emails")
+    s.add_argument("--clear-exam", action="store_true", help="with --slug, inherit global again")
+    s.set_defaults(fn=cmd_notify_emails)
     a = p.parse_args(argv)
     try:
         a.fn(a)

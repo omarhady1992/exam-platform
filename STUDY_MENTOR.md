@@ -28,6 +28,9 @@ bin/exam unrelease my-quiz [--attempt <attempt_id>]
 bin/exam delete-attempt <attempt_id>                 # e.g. to allow a retake
 bin/exam delete-exam my-quiz --yes                   # removes exam, attempts and images
 bin/exam allow-user someone@example.com [--role admin]   # allowlist an existing auth user
+bin/exam finishes [--all] [--json]                       # poll finish_notifications (wake queue)
+bin/exam ack --id <finish_id> | --attempt <attempt_id>   # mark a finish as handled
+bin/exam notify-emails [--slug SLUG] [--set a@b.com] [--clear-exam]
 ```
 
 Typical cycle: write JSON, `validate`, `upload --publish`. Omar takes it. Then `list` shows the short answers to mark. `export` to read his answers, `mark` the short answers and add feedback, then `release`.
@@ -123,3 +126,20 @@ The box can't reach Postgres directly. Add a new numbered file in `supabase/migr
 ## Tests
 `.venv/bin/python tools/e2e_test.py` runs the full REST test with a temporary user and cleans up after itself.
 `.venv/bin/python tools/sheet_test.py` tests equation-sheet access: in progress, submitted, released, other user, and anon. It uses a temporary exam and a temporary user, and removes both afterwards.
+
+
+## Finish notifications (do not email Study Mentor)
+When Omar submits (or time expires), a row is inserted into `finish_notifications` and **Omar** is emailed (`ohady1992@gmail.com` by default) if Resend is configured (`docs/FINISH_EMAIL.md`). Study Mentor is **not** emailed — poll the queue instead:
+
+```bash
+bin/exam finishes
+bin/exam export <slug>
+bin/exam mark <slug> --file results/<slug>-marks.json
+bin/exam release <slug> --attempt <attempt_id>
+bin/exam ack --id <finish_id>
+```
+
+A Grok Bot routine should wake this agent on new rows — see `READY_FOR_ROUTINE.md`. Never use `householdassistant@mail.grokbot.com` as a Mentor address.
+
+## Examiner (browser)
+Omar (admin role) can author exams at https://omarhady1992.github.io/exam-platform/#/examiner — create/edit questions, upload images / equation-sheet PDF→PNG, publish, and manage notify emails. CLI workflows above stay unchanged for marking.
