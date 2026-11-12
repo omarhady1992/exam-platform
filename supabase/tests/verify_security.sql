@@ -123,3 +123,67 @@ begin
 end $$;
 rollback;
 select 'LEARNING SECURITY CHECKS PASSED' as result;
+
+-- practice (0007): keys are unreachable for every client role; submissions only through RPCs; mentor fns service-role only
+begin;
+do $$
+declare r text; t text; f text; n int;
+begin
+  if exists (select 1 from information_schema.role_table_grants where table_schema = 'private' and table_name = 'practice_keys'
+              and grantee in ('anon','authenticated','PUBLIC')) then
+    raise exception 'SECURITY FAIL: a client role has a grant on private.practice_keys';
+  end if;
+  if (select relrowsecurity from pg_class where oid = 'public.practice_submissions'::regclass) is not true then
+    raise exception 'SECURITY FAIL: RLS off on practice_submissions';
+  end if;
+  foreach r in array array['anon','authenticated'] loop
+    perform set_config('request.jwt.claims', case when r = 'anon' then '{"role":"anon"}'
+      else '{"sub":"00000000-0000-0000-0000-000000000001","role":"authenticated"}' end, true);
+    execute format('set local role %I', r);
+    begin
+      execute 'select count(*) from private.practice_keys' into n;
+      raise exception 'SECURITY FAIL: % can read private.practice_keys', r;
+    exception when insufficient_privilege then raise notice 'ok: % cannot read practice_keys', r;
+    end;
+    foreach t in array array['practice_submissions','practice_answers','practice_notifications'] loop
+      begin
+        execute format('select count(*) from public.%I', t) into n;
+        raise exception 'SECURITY FAIL: % can read public.%', r, t;
+      exception when insufficient_privilege then raise notice 'ok: % cannot read %', r, t;
+      end;
+    end loop;
+    foreach f in array array['select public.mentor_practice_queue(true)', 'select public.mentor_practice_submissions(true, true)',
+                             'select public.mentor_practice_overview()', 'select public.mentor_load_practice(''{}''::jsonb, false)',
+                             'select public.mentor_mark_practice(''{}''::jsonb)',
+                             'select public.mentor_release_practice(gen_random_uuid(), true, false)',
+                             'select public.mentor_ack_practice(gen_random_uuid(), null, null)',
+                             'select public.mentor_allow_resubmit(''x'', 1, 1, null, true)',
+                             'select private.practice_view(gen_random_uuid(), gen_random_uuid())'] loop
+      begin
+        execute f;
+        raise exception 'SECURITY FAIL: % can run %', r, f;
+      exception when insufficient_privilege then raise notice 'ok: % blocked from %', r, split_part(f, '(', 1);
+      end;
+    end loop;
+    if r = 'anon' then
+      begin
+        perform public.get_practice('x', 1, 1);
+        raise exception 'SECURITY FAIL: anon can call get_practice';
+      exception when insufficient_privilege then raise notice 'ok: anon cannot call get_practice';
+      end;
+    else
+      begin
+        perform public.get_practice('x', 1, 1);
+        raise exception 'SECURITY FAIL: non-allowlisted user can call get_practice';
+      exception when insufficient_privilege then raise notice 'ok: non-allowlisted user rejected by get_practice';
+      end;
+      foreach t in array array['practice_questions','practice_fields','practice_days'] loop
+        execute format('select count(*) from public.%I', t) into n;
+        if n <> 0 then raise exception 'SECURITY FAIL: non-allowlisted user sees % rows of %', n, t; end if;
+      end loop;
+    end if;
+    execute 'reset role';
+  end loop;
+end $$;
+rollback;
+select 'PRACTICE SECURITY CHECKS PASSED' as result;
