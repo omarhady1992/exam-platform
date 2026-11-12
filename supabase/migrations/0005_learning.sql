@@ -449,8 +449,8 @@ begin
                   'published', d.published, 'videos', jsonb_array_length(d.videos), 'readings', jsonb_array_length(d.readings),
                   'goals', jsonb_array_length(d.goals), 'files', d.files) order by d.position)
               from public.course_days d where d.week_id = w.id), '[]'::jsonb)) order by w.n)
-      from public.course_weeks w where w.course_id = c.id), '[]'::jsonb)) order by c.position), '[]'::jsonb)
-  from public.courses c;
+      from public.course_weeks w where w.course_id = c.id), '[]'::jsonb)) order by c.position)
+  from public.courses c), '[]'::jsonb);
 end $$;
 
 create or replace function public.admin_course_progress() returns jsonb
