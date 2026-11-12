@@ -67,7 +67,7 @@ try:
             if "youtube-nocookie.com/embed/" not in src: ok = False; logs.append("video iframe not nocookie")
             pg.click("#donebtn"); pg.wait_for_selector("#donebtn[aria-pressed=true]")
             pg.click("#donebtn"); pg.wait_for_selector("#donebtn[aria-pressed=false]")
-            pg.goto(base + "#/progress"); pg.wait_for_selector(".qtable, .statgrid"); time.sleep(1)
+            time.sleep(3); pg.goto(base + "#/progress"); pg.wait_for_selector(".qtable, .statgrid"); time.sleep(1)
             pg.screenshot(path=OUT / f"{label}-4-progress.png", full_page=True)
             pg.goto(base + "#/learn/reservoir-engineering/1"); pg.wait_for_selector(".daylist"); pg.wait_for_selector("#deck .pdfv-page canvas", timeout=60000); time.sleep(1)
             pg.screenshot(path=OUT / f"{label}-5-week.png", full_page=label == "desktop")

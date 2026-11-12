@@ -240,7 +240,8 @@ section.card{scroll-margin-top:70px}
 .qrow:last-child,.wrow:last-child{border-bottom:0}
 .wrow{grid-template-columns:12px 1fr 160px 44px}.wrow:hover b{color:var(--teal-d)}
 .qdot{width:10px;height:10px;border-radius:50%;display:inline-block;flex:none}
-.qname,.wname{display:flex;flex-direction:column;min-width:0}
+.qname,.wname{display:flex;flex-direction:column;min-width:0;text-decoration:none;color:inherit}
+a.qname:hover b{color:var(--teal-d)}
 .qscore{display:flex;flex-direction:column;align-items:flex-end}.qscore b{font-size:1.15rem}
 .wbar .pbar{margin:0}.wnum{text-align:right;font-weight:700;font-size:.9rem}
 .recent{list-style:none;margin:0;padding:0}
@@ -254,6 +255,9 @@ section.card{scroll-margin-top:70px}
   .pdfv-pg{display:none}
   .pdfv-tools button{min-width:34px;height:34px}
   .wrow{grid-template-columns:12px 1fr 64px 40px}
+  .qrow{grid-template-columns:12px 1fr auto}.qrow .qgo{display:none}
+  .statgrid{grid-template-columns:1fr}
+  .overall{gap:12px}
   .vids{grid-template-columns:1fr}
   .daychips{grid-template-columns:1fr}
   #topnav{gap:0}#topnav a{padding:6px 6px;font-size:13px}

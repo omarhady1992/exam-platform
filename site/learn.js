@@ -414,9 +414,9 @@ export function createLearn(ctx) {
         <span class="small muted">${c.next ? `Next: W${c.next.week} ${esc(c.next.weekday)} · ${esc(c.next.title)}` : "All published days done"}</span></a>`).join("")}</div>
       <section class="card"><h2>Quiz scores</h2>${quizzes.length ? `<div class="qtable">${quizzes.map((q) => `<div class="qrow">
           <span class="qdot" style="background:${esc(q.w.color)}"></span>
-          <div class="qname"><b>${esc(q.title)}</b><small class="muted">${esc(q.w.course_title)} · Week ${q.w.n}</small></div>
+          <a class="qname" href="${q.best ? `#/results/${esc(q.best.attempt_id)}` : `#/exam/${esc(q.slug)}`}"><b>${esc(q.title)}</b><small class="muted">${esc(q.w.course_title)} · Week ${q.w.n}</small></a>
           <div class="qscore">${q.best ? `<b>${esc(String(q.best.pct))}%</b><small class="muted">${esc(String(+q.best.score))}/${esc(String(+q.best.max))}</small>` : q.submitted ? `<span class="badge gray">Awaiting results</span>` : q.in_progress ? `<span class="badge amber">In progress</span>` : `<span class="badge teal">Not attempted</span>`}</div>
-          <a class="small" href="${q.best ? `#/results/${esc(q.best.attempt_id)}` : `#/exam/${esc(q.slug)}`}">${q.best ? "Results" : "Open"} →</a></div>`).join("")}</div>` : `<p class="muted small">No quizzes are linked to your course weeks yet.</p>`}</section>
+          <a class="small qgo" href="${q.best ? `#/results/${esc(q.best.attempt_id)}` : `#/exam/${esc(q.slug)}`}">${q.best ? "Results" : "Open"} →</a></div>`).join("")}</div>` : `<p class="muted small">No quizzes are linked to your course weeks yet.</p>`}</section>
       <section class="card"><h2>By week</h2><div class="wtable">${data.weeks.map((w) => `<a class="wrow" href="${weekHref(w.course, w.n)}">
           <span class="qdot" style="background:${esc(w.color)}"></span><span class="wname"><b>Week ${w.n} · ${esc(w.title)}</b><small class="muted">${esc(w.course_title)}</small></span>
           <span class="wbar">${bar(w.days_done, w.days_total, w.color)}</span><span class="wnum">${w.days_done}/${w.days_total}</span></a>`).join("")}</div></section>
