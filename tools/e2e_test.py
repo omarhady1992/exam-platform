@@ -11,6 +11,8 @@ SK = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
 # Gateway key for "client" calls. Use the anon key if provided; otherwise the service key is sent only as the
 # gateway apikey while the Authorization header carries the user's JWT, so PostgREST runs as `authenticated`.
 GW = os.environ.get("SUPABASE_ANON_KEY") or SK
+import re as _re0
+ANON = _re0.search(r'SUPABASE_ANON_KEY:\s*"([^"]+)"', (Path(__file__).resolve().parent.parent / "site" / "config.js").read_text()).group(1)
 ROOT = Path(__file__).resolve().parent.parent
 EXAM = sys.argv[1] if len(sys.argv) > 1 else str(ROOT / "exams/sample-cbl-vdl-quiz.json")
 ok_count = 0
@@ -54,8 +56,74 @@ try:
     c = Client(tok)
 
     r = c.rpc("list_my_exams"); check(r.status_code in (401, 403) or "Not authorized" in r.text, "non-allowlisted user is rejected")
+    # ---- learning platform: anonymous and non-allow-listed sessions get nothing
+    anon = Client(GW if GW != SK else "x"); anon.h = {"apikey": ANON, "Content-Type": "application/json"}
+    r = anon.rpc("list_courses"); check(not r.ok, f"anon cannot call list_courses ({r.status_code})")
+    for t in ("courses", "course_weeks", "course_days", "day_progress"):
+        r = anon.get(f"/rest/v1/{t}?select=*&limit=1"); check(not r.ok or r.json() == [], f"anon cannot read {t} ({r.status_code})")
+    lc = admin("admin_list_courses")
+    ch = next(x for x in lc if x["slug"] == "cased-hole")
+    pub_w = next(w for w in ch["weeks"] if w["published"] and w["days"])
+    pub_d = next(d for d in pub_w["days"] if d["published"])
+    pack_path = next(f["path"] for f in pub_d["files"] if f["kind"] == "pack")
+    r = anon.post(f"/storage/v1/object/sign/course-files/{pack_path}", {"expiresIn": 60}); check(not r.ok, f"anon cannot sign a course file ({r.status_code})")
+    r = requests.get(f"{URL}/storage/v1/object/public/course-files/{pack_path}"); check(not r.ok, f"course-files bucket is not public ({r.status_code})")
+    r = c.rpc("list_courses"); check(not r.ok, f"non-allowlisted user cannot list courses ({r.status_code})")
+    for t in ("courses", "course_days"):
+        r = c.get(f"/rest/v1/{t}?select=*&limit=1"); check(not r.ok or r.json() == [], f"non-allowlisted user sees no {t} rows")
+    r = c.post(f"/storage/v1/object/sign/course-files/{pack_path}", {"expiresIn": 60}); check(not r.ok, f"non-allowlisted user cannot sign a course file ({r.status_code})")
     admin("admin_allow_user", p_email=email, p_role="student")
     check(c.rpc("whoami").json()["email"] == email, "allowlisted user: whoami works")
+
+    # ---- learning platform: allow-listed user sees published material, signed URLs work, keys never stored
+    lst = c.rpc("list_courses"); check(lst.ok, "allowlisted user can list courses"); lst = lst.json()
+    slugs = {x["slug"] for x in lst["courses"]}
+    check({"cased-hole", "reservoir-engineering", "esp"} <= slugs and all(x["days_total"] > 0 for x in lst["courses"]), f"three courses with published days ({sorted(slugs)})")
+    gc = c.rpc("get_course", p_slug="cased-hole").json()
+    check(all(w["published"] for w in gc["weeks"]) and all(d["published"] for w in gc["weeks"] for d in w["days"]), "only published weeks/days are served")
+    draft_w = [w["n"] for w in ch["weeks"] if not w["published"]]
+    check(not any(w["n"] in draft_w for w in gc["weeks"]), f"draft weeks hidden ({draft_w})")
+    gd = c.rpc("get_day", p_course="cased-hole", p_week=pub_w["n"], p_position=pub_d["position"])
+    check(gd.ok and gd.json()["day"]["files"], "get_day returns the day's files"); gd = gd.json()
+    kinds = {f["kind"] for f in gd["day"]["files"]}
+    check("pack" in kinds and "infographic" in kinds, f"day has PDF pack and infographic ({sorted(kinds)})")
+    check(all("youtube_id" in v and "title" in v for v in gd["day"]["videos"]), f"videos have ids and titles ({len(gd['day']['videos'])})")
+    r = c.post(f"/storage/v1/object/sign/course-files/{pack_path}", {"expiresIn": 120})
+    check(r.ok and "signedURL" in r.json(), f"allowlisted user can sign the pack URL ({r.status_code})")
+    signed = URL + "/storage/v1" + r.json()["signedURL"]
+    g = requests.get(signed, headers={"Range": "bytes=0-1023"})
+    check(g.status_code in (200, 206) and g.content[:4] == b"%PDF", f"signed URL serves the PDF ({g.status_code}, range ok={g.status_code == 206})")
+    ig_path = next(f["path"] for f in gd["day"]["files"] if f["kind"] == "infographic")
+    r = c.post(f"/storage/v1/object/sign/course-files/{ig_path}", {"expiresIn": 60})
+    g = requests.get(URL + "/storage/v1" + r.json()["signedURL"]) if r.ok else None
+    check(g is not None and g.ok and g.content[:8] == b"\x89PNG\r\n\x1a\n", "signed URL serves the infographic PNG")
+    r = c.post("/storage/v1/object/sign/course-files/cased-hole/week-04/not-a-real-file.pdf", {"expiresIn": 60})
+    check(not r.ok, f"cannot sign an unreferenced path ({r.status_code})")
+    r = c.post("/storage/v1/object/sign/course-files/cased-hole/keys/week4-tuesday-key.md", {"expiresIn": 60})
+    check(not r.ok, f"cannot sign a key-like path ({r.status_code})")
+    r = c.rpc("get_day", p_course="cased-hole", p_week=max(draft_w or [99]), p_position=1); check(not r.ok, "draft day is not served")
+    r = c.rpc("set_day_done", p_course="cased-hole", p_week=pub_w["n"], p_position=pub_d["position"], p_done=True)
+    check(r.ok and r.json()["done"] and r.json()["streak"]["current"] >= 1, "mark as done works and starts a streak")
+    dash = c.rpc("learning_dashboard").json()
+    chs = next(x for x in dash["courses"] if x["slug"] == "cased-hole")
+    check(chs["days_done"] == 1 and any(x["title"] == pub_d["title"] for x in dash["recent"]), "dashboard counts the done day")
+    r = c.rpc("set_day_done", p_course="cased-hole", p_week=pub_w["n"], p_position=pub_d["position"], p_done=False)
+    check(r.ok and not r.json()["done"], "undo mark as done")
+    r = c.post("/rest/v1/courses", {"slug": "hack-test", "title": "x"}); check(not r.ok, f"student cannot insert courses ({r.status_code})")
+    r = c.rpc("admin_upsert_day", p={"course": "cased-hole", "week": 1, "position": 1, "title": "x"}); check(not r.ok, f"student cannot call admin_upsert_day ({r.status_code})")
+    r = c.get("/rest/v1/day_progress?select=user_id"); check(r.ok and all(x["user_id"] == uid for x in r.json()), "user reads only own progress rows")
+    import re as _re
+    def _walk(prefix):
+        out = []
+        for it in requests.post(f"{URL}/storage/v1/object/list/course-files", headers=ah, json={"prefix": prefix, "limit": 1000}).json():
+            pth = f"{prefix}/{it['name']}" if prefix else it["name"]
+            out += [pth] if it.get("id") else _walk(pth)
+        return out
+    allp = _walk("")
+    bad = [x for x in allp if _re.search(r"(^|/)(keys?|exams|references)/|answer|(^|[/_. -])keys?([_. -]|$)|solution|(^|/)truth[_-]", x, _re.I)]
+    check(len(allp) > 50 and not bad, f"no answer keys / textbooks in the bucket ({len(allp)} objects, {len(bad)} bad)")
+    r = requests.post(f"{URL}/storage/v1/object/course-files/cased-hole/week-01/Week1-Quiz-Fundamentals-Answer-Key.pdf", headers={**c.h, "Content-Type": "application/pdf"}, data=b"%PDF-1.4 test")
+    check(not r.ok, f"student cannot upload to course-files ({r.status_code})")
 
     for t in ("question_keys", "questions", "answers", "attempts", "exams", "focus_events", "allowed_users", "finish_notifications", "app_settings"):
         r = c.get(f"/rest/v1/{t}?select=*&limit=1")

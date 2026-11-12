@@ -143,3 +143,66 @@ A Grok Bot routine should wake this agent on new rows — see `READY_FOR_ROUTINE
 
 ## Examiner (browser)
 Omar (admin role) can author exams at https://omarhady1992.github.io/exam-platform/#/examiner — create/edit questions, upload images / equation-sheet PDF→PNG, publish, and manage notify emails. CLI workflows above stay unchanged for marking.
+
+## Learning platform (course material)
+
+Omar now has course pages next to his exams: **Courses** (`#/courses`, the home page), **Progress** (`#/progress`),
+and one page per course (`#/learn/<course>`), week (`#/learn/<course>/<week>`) and day (`#/learn/<course>/<week>/<position>`).
+A day page shows the PDF pack in a built-in viewer (works on phones), the infographic, learning goals, YouTube videos
+(privacy-enhanced embeds), readings, the practice description, the week's lecture deck and files, and the week's quiz
+with his best score once results are released. He ticks **Mark as done**; the dashboard shows done/total per course, quiz
+scores and a day streak (Cairo calendar days).
+
+Courses: `cased-hole` (Mon–Thu), `reservoir-engineering` (Sun–Wed, quiz Thursday), `esp` (Mon–Thu).
+Day positions follow the course's study days: cased-hole/esp Monday=1 … Thursday=4; reservoir-engineering Sunday=1 … Wednesday=4.
+
+Files go to the **private** Storage bucket `course-files` (`<course>/week-NN/<file name>`), never to the GitHub repo.
+The site gets 1-hour signed URLs, and storage only signs files that belong to a *published* day/week/course.
+
+**Never upload answer keys, textbooks or exam sources.** The CLI refuses (and the database rejects) anything under
+`keys/`, `exams/` or `references/`, `/workspace/re/references/`, and any file whose name contains `answer`, `key`,
+`solution` or starts with `truth_`. Keys stay on the box, as before.
+
+```bash
+cd /workspace/exam-platform
+# Publish a new day (the usual 12:00 step). Goals and videos are read from the PDF with --from-pdf
+# (numbered "Learning goals" section; YouTube links, titles via YouTube oEmbed).
+bin/exam course-publish --course cased-hole --week 5 --day Monday \
+    --pdf /workspace/study-pdfs/Week5-Monday-Well-Integrity-and-Leak-Detection.pdf \
+    --infographic /workspace/study-pdfs/Week5-Monday-Well-Integrity-and-Leak-Detection-Infographic.png \
+    --from-pdf
+#   optional: --title "..."  --videos ID 'ID|Title|Channel|12:30' https://youtu.be/ID   --videos-json vids.json
+#             --goal "..." (repeat) | --goals-json goals.json    --reading 'Title|https://…' (repeat) | --readings-json r.json
+#             --practice "..."  --extra file.zip=Label  --date 2026-11-16  --draft (upload but keep hidden)
+#   Videos/readings/goals you pass replace the stored list; anything you don't pass is kept.
+
+# A week: lecture deck, extra files, the quiz link (exam slug), publish state
+bin/exam course-week --course cased-hole --week 5 --title "Well integrity, leak detection, case studies" \
+    --deck Week5-Lecture-Well-Integrity.pdf --deck-pptx Week5-Lecture-Well-Integrity.pptx \
+    --file Week5-Code.zip="Starter code" --quiz week5-well-integrity-quiz --publish
+#   --quiz with no slugs clears the link; --replace-files drops the old file list first
+
+# A course (rarely needed): metadata and where Omar is
+bin/exam course-set --slug reservoir-engineering --title "Practical Reservoir Engineering" --current-week 2
+
+# Bulk import of everything that already exists on disk (idempotent: unchanged files are skipped)
+bin/exam course-import --course all --dry-run
+bin/exam course-import --course reservoir-engineering                    # publishes up to where Omar is
+bin/exam course-import --course reservoir-engineering --publish-through 2  # or a given week (0 = all built weeks)
+
+bin/exam course-list [--course esp] [--all] [--json]       # weeks/days, P = published, v/r/g = videos/readings/goals
+bin/exam course-visibility --course esp --week 5 off        # hide/show a course, week (--week) or day (--week --day)
+bin/exam course-progress [--course cased-hole]              # what Omar opened / marked done (Cairo time)
+bin/exam course-audit                                       # bucket check: no key-like files, nothing missing
+```
+
+Where things come from in `course-import`:
+- **cased-hole:** `/workspace/cased-hole-logging-roadmap.md` (goals, readings, practice), packs and infographics in
+  `/workspace/study-pdfs/WeekN-<Day>-*.pdf|png` (Week 1 Monday is `/workspace/through-casing-logging-handout.pdf`),
+  goals and videos taken from the PDF when it has a numbered goals section / YouTube links. Week 5 days exist as hidden
+  drafts (roadmap text only) until their packs are published.
+- **reservoir-engineering:** the roadmap `.md` (goals, readings, videos) plus `Reservoir-Engineering-Course/WeekN/`.
+  Weeks 2–31 exist as hidden week shells (title and summary only).
+- **esp:** `/workspace/esp/roadmap/data.py` (goals, readings, verified video ids) plus `ESP-Course/WeekN-*/`.
+
+Stage 2 (typed practice answers with auto-checking) is not built yet; the schema is ready for it (days have stable ids).

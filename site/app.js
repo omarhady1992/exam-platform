@@ -1,5 +1,6 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
-import { createExaminer } from "./examiner.js?v=1793870000";
+import { createExaminer } from "./examiner.js?v=1794000000";
+import { createLearn } from "./learn.js?v=1794000000";
 
 const CFG = window.EXAM_CONFIG || {};
 const TZ = CFG.TIME_ZONE || "Africa/Cairo";
@@ -34,7 +35,11 @@ function modal(html, { wide = false, onClose } = {}) {
 let isAdmin = false;
 function setNav() {
   if (!session) { nav.innerHTML = ""; return; }
-  nav.innerHTML = `<a href="#/">Exams</a>${isAdmin ? `<a href="#/examiner">Examiner</a>` : ""}<a href="#/account">Account</a>`;
+  const cur = (location.hash.match(/^#\/([^/]*)/) || [])[1] || "courses";
+  const sec = ["courses", "learn", ""].includes(cur) ? "courses" : ["exams", "exam", "attempt", "results"].includes(cur) ? "exams" : cur;
+  const a = (href, key, label) => `<a href="${href}"${sec === key ? ` class="active" aria-current="page"` : ""}>${label}</a>`;
+  nav.innerHTML = a("#/courses", "courses", "Courses") + a("#/progress", "progress", "Progress") + a("#/exams", "exams", "Exams")
+    + (isAdmin ? a("#/examiner", "examiner", "Examiner") : "") + a("#/account", "account", "Account");
 }
 async function refreshAdminFlag() {
   if (!session || !sb) { isAdmin = false; setNav(); return; }
@@ -166,9 +171,17 @@ function openSheet(sheet, { expiresIn = 3600, withTimer = false } = {}) {
   }, () => { if (el.isConnected) { wrap.innerHTML = `<div class="error" style="margin:14px">The equation sheet isn't available right now.</div>`; } });
 }
 
+// ------------------------------------------------------------------ learning pages
+const learn = createLearn({
+  app, esc, rpc, toast, modal, fmtCairo, sb: () => sb,
+  setWide: (on) => app.classList.toggle("wide", !!on),
+  onLeave: (f) => cleanup.push(f),
+});
+
 // ------------------------------------------------------------------ router
 async function render() {
   cleanup.forEach((f) => { try { f(); } catch {} }); cleanup = [];
+  app.classList.remove("wide"); document.body.classList.remove("noscroll");
   document.getElementById("modal-root").innerHTML = "";
   closeSheet();
   setNav();
@@ -186,9 +199,19 @@ async function render() {
       case "exam": return pageExam(decodeURIComponent(arg));
       case "attempt": return pageAttempt(arg);
       case "results": return pageResults(arg);
-      default: return pageDashboard();
+      case "exams": return pageDashboard();
+      case "progress": return await learn.pageProgress();
+      case "learn": {
+        const [c, w, p] = arg.split("/").map(decodeURIComponent);
+        if (p) return await learn.pageDay(c, Number(w), Number(p));
+        if (w) return await learn.pageWeek(c, Number(w));
+        if (c) return await learn.pageCourse(c);
+        return await learn.pageCourses();
+      }
+      case "courses":
+      default: return await learn.pageCourses();
     }
-  } catch (e) { app.innerHTML = `<div class="card"><div class="error">${esc(errMsg(e))}</div><a class="btn secondary" href="#/">Back to exams</a></div>`; }
+  } catch (e) { app.innerHTML = `<div class="card"><div class="error">${esc(errMsg(e))}</div><a class="btn secondary" href="#/courses">Back to courses</a></div>`; }
 }
 
 // ------------------------------------------------------------------ auth pages
@@ -311,7 +334,7 @@ async function pageExam(slug) {
   app.innerHTML = `<div class="center muted">Loading…</div>`;
   const data = await rpc("list_my_exams");
   const e = data.exams.find((x) => x.slug === slug);
-  if (!e) { app.innerHTML = `<div class="card"><div class="error">This exam isn't available.</div><a class="btn secondary" href="#/">Back</a></div>`; return; }
+  if (!e) { app.innerHTML = `<div class="card"><div class="error">This exam isn't available.</div><a class="btn secondary" href="#/exams">Back</a></div>`; return; }
   const now = new Date(data.server_now), s = examStatus(e, now);
   const inProg = e.attempts.find((a) => a.status === "in_progress");
   const canStart = !inProg && e.attempts.length < e.attempts_allowed && !(e.opens_at && new Date(e.opens_at) > now) && !(e.closes_at && new Date(e.closes_at) <= now);
@@ -337,7 +360,7 @@ async function pageExam(slug) {
     <div class="row">
       ${inProg ? `<a class="btn" href="#/attempt/${inProg.id}">Resume attempt</a>` : ""}
       ${canStart ? `<button class="btn" id="start">Start exam</button>` : ""}
-      <a class="btn secondary" href="#/">Back</a>
+      <a class="btn secondary" href="#/exams">Back</a>
     </div>
   </div>`;
   const b = app.querySelector("#start");
@@ -530,7 +553,7 @@ function showSubmitted(att, timedOut = false) {
   app.innerHTML = `<div class="card narrow" style="text-align:center">
     <div style="font-size:44px">✓</div><h1>${timedOut ? "Time's up — exam submitted" : "Exam submitted"}</h1>
     <p class="muted">${esc(att.exam?.title || "")}<br>Submitted ${esc(fmtCairo(att.submitted_at))}</p>
-    ${att.released ? `<a class="btn" href="#/results/${att.attempt_id}">View results</a>` : `<p>Your answers are with your mentor. Results will appear on your dashboard once they're released.</p><a class="btn" href="#/">Back to exams</a>`}
+    ${att.released ? `<a class="btn" href="#/results/${att.attempt_id}">View results</a>` : `<p>Your answers are with your mentor. Results will appear on your dashboard once they're released.</p><a class="btn" href="#/exams">Back to exams</a>`}
   </div>`;
 }
 
@@ -557,7 +580,7 @@ async function pageResults(id) {
   app.innerHTML = `<div class="center muted">Loading results…</div>`;
   let r;
   try { r = await rpc("get_results", { p_attempt: id }); }
-  catch (e) { app.innerHTML = `<div class="card narrow"><h1>Results not available yet</h1><p class="muted">${esc(errMsg(e))}</p><a class="btn" href="#/">Back to exams</a></div>`; return; }
+  catch (e) { app.innerHTML = `<div class="card narrow"><h1>Results not available yet</h1><p class="muted">${esc(errMsg(e))}</p><a class="btn" href="#/exams">Back to exams</a></div>`; return; }
   const pct = r.max_score > 0 ? Math.round((r.total_score / r.max_score) * 100) : 0;
   app.innerHTML = `
     <div class="card"><div class="score"><div class="ring" style="--p:${pct}"><span>${pct}%</span></div>
@@ -579,7 +602,7 @@ async function pageResults(id) {
         ${q.feedback ? `<div class="fb"><b>Feedback</b><br>${rich(q.feedback)}</div>` : ""}
       </div>`;
     }).join("")}
-    <a class="btn secondary" href="#/">Back to exams</a>`;
+    <a class="btn secondary" href="#/exams">Back to exams</a>`;
   app.querySelectorAll("[data-img]").forEach((d) => d.dataset.img && attachImage(d, d.dataset.img));
   const sb2 = app.querySelector("#sheetbtn");
   if (sb2) sb2.onclick = () => openSheet(r.equation_sheet);
@@ -603,11 +626,11 @@ async function pageExaminer(arg) {
     isAdmin = true; setNav();
   } catch (e) {
     if (e?.code === "NOT_ADMIN" || /Not authorized|only available to admin/i.test(errMsg(e))) {
-      app.innerHTML = `<div class="card narrow"><h1>Examiner</h1><p class="muted">This area is for admin accounts only.</p><a class="btn" href="#/">Back to exams</a></div>`;
+      app.innerHTML = `<div class="card narrow"><h1>Examiner</h1><p class="muted">This area is for admin accounts only.</p><a class="btn" href="#/exams">Back to exams</a></div>`;
       isAdmin = false; setNav();
       return;
     }
-    app.innerHTML = `<div class="card"><div class="error">${esc(errMsg(e))}</div><a class="btn secondary" href="#/">Back</a></div>`;
+    app.innerHTML = `<div class="card"><div class="error">${esc(errMsg(e))}</div><a class="btn secondary" href="#/exams">Back</a></div>`;
   }
 }
 
