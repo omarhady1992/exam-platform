@@ -7,3 +7,5 @@ __pycache__/
 results/
 .env
 .ui-test/
+courses/build/
+courses/oembed-cache.json

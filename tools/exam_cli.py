@@ -11,6 +11,9 @@ from zoneinfo import ZoneInfo
 
 import requests
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import course_cli  # noqa: E402
+
 CAIRO = ZoneInfo("Africa/Cairo")
 DEFAULT_URL = "https://czqtzjkkxpzixiiplvro.supabase.co"
 ROOT = Path(__file__).resolve().parent.parent
@@ -467,10 +470,11 @@ def main(argv=None):
     s.add_argument("--set", help="comma-separated emails")
     s.add_argument("--clear-exam", action="store_true", help="with --slug, inherit global again")
     s.set_defaults(fn=cmd_notify_emails)
+    course_cli.add_parsers(sub)
     a = p.parse_args(argv)
     try:
         a.fn(a)
-    except CliError as e:
+    except (CliError, course_cli.CourseError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
     except requests.RequestException as e:
