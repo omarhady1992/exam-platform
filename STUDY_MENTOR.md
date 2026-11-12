@@ -28,7 +28,8 @@ bin/exam unrelease my-quiz [--attempt <attempt_id>]
 bin/exam delete-attempt <attempt_id>                 # e.g. to allow a retake
 bin/exam delete-exam my-quiz --yes                   # removes exam, attempts and images
 bin/exam allow-user someone@example.com [--role admin]   # allowlist an existing auth user
-bin/exam finishes [--all] [--json]                       # poll finish_notifications (wake queue)
+bin/exam finishes [--all] [--json]                       # poll finish_notifications (quiz queue only)
+bin/exam wake-queue --json                               # ONE poll for quizzes + practice: {"quiz": [...], "practice": [...], "total": n}
 bin/exam ack --id <finish_id> | --attempt <attempt_id>   # mark a finish as handled
 bin/exam notify-emails [--slug SLUG] [--set a@b.com] [--clear-exam]
 ```
@@ -205,4 +206,71 @@ Where things come from in `course-import`:
   Weeks 2–31 exist as hidden week shells (title and summary only).
 - **esp:** `/workspace/esp/roadmap/data.py` (goals, readings, verified video ids) plus `ESP-Course/WeekN-*/`.
 
-Stage 2 (typed practice answers with auto-checking) is not built yet; the schema is ready for it (days have stable ids).
+## Practice answers (stage 2)
+Each day page has a **Practice** section built from the day's Part 6/7 practice questions (A1, B2, …). Omar types
+answers, saves drafts (autosave too) and submits **once** per day unless you allow another attempt. Numeric answers
+are auto-marked on the server at submit time; written answers wait for you. Nothing about marks, expected values or
+feedback reaches Omar until you **release**.
+
+Answer types: `numeric` (fixed unit shown; tolerance = max(abs, % of the answer); default 2 % or half the last digit,
+or the key's own range / "accept X–Y"), `short` text, `long` text. Field keys (`fkey`) look like `A4`, `A4.1` (part 1
+of a multi-value answer), `A4.c` (comment on a numeric question) or `B1.v` (OK / not OK verdict).
+
+Hard rules (enforced in the database, not just here):
+- Keys live only in `private.practice_keys` (no grants to `anon`/`authenticated`; the private schema is not exposed
+  by the API). They are parsed from `/workspace/study-pdfs/keys/`, `/workspace/study-pdfs/Reservoir-Engineering-Course/keys/`
+  and `/workspace/esp/keys/` and sent straight to the DB with the service role. Never copy a key into the repo, the
+  site, the `course-files` bucket or any file.
+- Submissions, answers and the practice queue have no client table access; Omar sees them only through
+  `get_practice` / `save_practice` / `practice_dashboard`, which hide marks and expected values until release.
+- Every `mentor_*` function is **service-role only** (even Omar's admin login can't read keys or marks early).
+- After release Omar sees: his score, your overall feedback, and per answer ✓/✗ marks, your feedback and, for numbers,
+  the expected value ± tolerance. Key text (`key_reference`) is never shown to him.
+
+```bash
+# Load / refresh questions + keys (idempotent; prints counts only, never key content)
+bin/exam practice-load-keys                                   # every published day of every course
+bin/exam practice-load-keys --course esp --week 5 --day Tuesday [--dry-run] [--json]
+#   --include-unpublished also loads hidden draft days; --force removes stale questions even if submitted
+bin/exam practice-list [--all] [--json]                       # per day: questions, fields, auto-marked, keyed, parse status
+
+# Wake routine: ONE poll covers quiz finishes and practice submissions
+bin/exam wake-queue --json        # {"quiz":[finish rows], "practice":[{id, submission_id, course, week, weekday, attempt,
+                                  #   auto_score, max_score, pending_manual, submitted_at, commands{export,mark,release,ack}}], "total": n}
+
+bin/exam practice-submissions [--all]                         # submitted, not yet released (--all: everything)
+bin/exam practice-submissions --json --id <submission_id>     # full marking view: answers, auto results, key_answer/
+                                                              #   key_reference, needs_marking per field
+bin/exam practice-mark --file marks.json [--release] [--force]
+bin/exam practice-release --id <submission_id> [--force]      # refused while answers still need marking (unless --force)
+bin/exam practice-unrelease --id <submission_id>
+bin/exam practice-ack --id <practice notification id>          # or --submission <submission_id>
+bin/exam practice-allow-resubmit --course cased-hole --week 4 --day Tuesday [--email ohady1992@gmail.com] [--revoke]
+```
+
+`marks.json` (one object or a list):
+```json
+{"submission_id": "…", "feedback": "Overall comment shown to Omar on release.",
+ "marks": [{"fkey": "B2", "marks": 2, "feedback": "Good."},
+           {"fkey": "A3", "marks": 1, "feedback": "Give both intercepts."},
+           {"fkey": "A5.2", "marks": 1, "feedback": "Accepted: rounding."}]}
+```
+`marks` must be between 0 and the field's marks. You can override an auto-marked numeric answer the same way
+(manual marks win); `"marks": null` clears your mark. Text fields are 2 marks, numeric parts and comments 1.
+
+Typical wake → mark loop:
+1. `bin/exam wake-queue --json` → for each `practice` item run its `commands.export`.
+2. Mark every field with `needs_marking: true` (use `key_reference`), check the auto results, write `marks.json`.
+3. `bin/exam practice-mark --file marks.json --release`, then `bin/exam practice-ack --id <id>`.
+4. Send Omar the usual short summary if you want; the site already shows the result.
+
+Parse limits: questions are taken from lettered items (`A1.`, `B2:`) in the PDF practice part and matched to the key
+items with the same tag. Days whose practice is only tables/charts (no lettered items) or that have no key file are
+reported as `unparsed` and get no Practice form (the day page falls back to "send your answers as usual"). Items in
+the PDF with no key item are loaded as text questions without a reference (you mark them from your own notes). A key
+answer becomes auto-marked only when it is unambiguous (one bold number, or several bold numbers each with its own
+label, or a table "Value" cell); everything else is marked by you.
+
+Tests: `tools/e2e_test.py` includes the practice checks (`tools/practice_e2e.py`); `tools/practice_ui_shots.py
+[local|live]` takes the form/result screenshots with a temp account and deletes it.
+

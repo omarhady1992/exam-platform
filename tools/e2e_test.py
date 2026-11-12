@@ -5,6 +5,7 @@ import json, os, secrets, sys, time, subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import requests
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 URL = os.environ.get("SUPABASE_URL", "https://czqtzjkkxpzixiiplvro.supabase.co")
 SK = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
@@ -196,6 +197,10 @@ try:
     admin("admin_release", p_slug=slug, p_released=True, p_attempt=att["attempt_id"])
     res = c.rpc("get_results", p_attempt=att["attempt_id"]); check(res.ok, "results visible after release")
     res = res.json(); check("answer" in res["questions"][0] and res["feedback"] == "Good work (test)", "key + feedback shown after release")
+
+    # practice (stage 2)
+    import practice_e2e
+    practice_e2e.run(c, anon, email, check, admin, URL, GW, ANON)
 
     # timing: exam that closes 5 s from now, so the deadline passes quickly
     tdoc = {"slug": timing_slug, "title": "E2E timing test", "time_limit_minutes": 5, "published": True,

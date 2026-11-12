@@ -1,6 +1,6 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
-import { createExaminer } from "./examiner.js?v=1794000100";
-import { createLearn } from "./learn.js?v=1794000100";
+import { createExaminer } from "./examiner.js?v=1794000300";
+import { createLearn } from "./learn.js?v=1794000300";
 
 const CFG = window.EXAM_CONFIG || {};
 const TZ = CFG.TIME_ZONE || "Africa/Cairo";

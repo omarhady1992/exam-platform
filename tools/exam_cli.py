@@ -13,6 +13,7 @@ import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import course_cli  # noqa: E402
+import practice_cli  # noqa: E402
 
 CAIRO = ZoneInfo("Africa/Cairo")
 DEFAULT_URL = "https://czqtzjkkxpzixiiplvro.supabase.co"
@@ -471,6 +472,7 @@ def main(argv=None):
     s.add_argument("--clear-exam", action="store_true", help="with --slug, inherit global again")
     s.set_defaults(fn=cmd_notify_emails)
     course_cli.add_parsers(sub)
+    practice_cli.add_parsers(sub)
     a = p.parse_args(argv)
     try:
         a.fn(a)

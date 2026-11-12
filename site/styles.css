@@ -264,3 +264,57 @@ a.qname:hover b{color:var(--teal-d)}
   .brand span:last-child{display:none}
 }
 @media (max-width:380px){#topnav a{padding:6px 4px;font-size:12.5px}}
+
+/* ---------------------------------------------------------------- practice (stage 2) */
+.pintro{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;justify-content:space-between;margin-bottom:6px}
+.pintro p{margin:0;flex:1 1 320px;color:#475569}
+.psec{font-size:.95rem;margin:22px 0 8px;padding-top:12px;border-top:1px solid var(--line);color:var(--navy)}
+.pq{padding:12px 0;border-bottom:1px dashed var(--line)}
+.pq:last-of-type{border-bottom:0}
+.pqh{display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:baseline;line-height:1.45}
+.pqh b{background:#e0f2f1;color:#115e59;border-radius:6px;padding:1px 7px;font-size:.8rem}
+.pfields{display:flex;flex-wrap:wrap;gap:10px 18px;margin:10px 0 0 0;padding-left:44px}
+.pfield{display:flex;flex-direction:column;gap:4px;min-width:0}
+.pfield.numeric{flex:0 1 230px}.pfield.short{flex:1 1 300px}.pfield.long{flex:1 1 100%}
+.plab{display:block;font-size:.78rem;font-weight:700;color:#5b6b85;margin-bottom:3px}
+.pin{display:flex;align-items:center;gap:6px}
+.pin input{width:100%;max-width:150px;font-variant-numeric:tabular-nums}
+.pin small{color:#5b6b85;font-weight:600;white-space:nowrap}
+.pnum input,.ptext input,.ptext textarea{font:inherit;border:1px solid #cbd5e1;border-radius:8px;padding:8px 10px;background:#fff;box-sizing:border-box}
+.ptext input,.ptext textarea{width:100%}
+.ptext textarea{resize:vertical;min-height:72px;line-height:1.45}
+.pnum input:focus,.ptext input:focus,.ptext textarea:focus{outline:2px solid #14b8a6;outline-offset:0;border-color:#14b8a6}
+.pwarn{color:#b45309;font-size:.75rem;font-style:normal}
+.pval{background:#f8fafc;border:1px solid var(--line);border-radius:8px;padding:7px 10px}
+.pans{white-space:pre-wrap;word-break:break-word}
+.pres{font-size:.85rem;border-radius:8px;padding:6px 10px;display:flex;flex-wrap:wrap;gap:4px 8px;align-items:baseline}
+.pres p{flex-basis:100%;margin:2px 0 0;color:#334155}
+.pres.ok{background:#ecfdf5;color:#065f46}.pres.bad{background:#fef2f2;color:#991b1b}.pres.part{background:#fffbeb;color:#92400e}.pres.pending{background:#f1f5f9;color:#5b6b85}
+.pactions{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;margin-top:18px;padding-top:14px;border-top:1px solid var(--line);position:sticky;bottom:0;background:#fff;padding-bottom:6px}
+.pnote{background:#f1f5f9;border-radius:10px;padding:10px 14px;margin:8px 0;color:#334155}
+.pscore{background:#f0fdfa;border:1px solid #99f6e4;border-radius:12px;padding:14px 16px;margin:10px 0;display:grid;gap:8px}
+.pscore b{font-size:1.8rem}.pscore b small{font-size:1rem;color:#5b6b85}
+.pfb{margin:4px 0 0;white-space:pre-wrap}
+.row.end{justify-content:flex-end}
+.pweek{padding:8px 0 12px;border-bottom:1px solid var(--line)}.pweek:last-child{border-bottom:0}
+.pweekh{display:grid;grid-template-columns:12px 1fr auto;gap:12px;align-items:center;padding:6px 0}
+.prow{display:grid;grid-template-columns:44px 1fr auto;gap:10px;align-items:center;padding:7px 0 7px 24px;text-decoration:none;color:inherit;border-top:1px dashed var(--line)}
+.prow:hover .pname{text-decoration:underline}
+.pday{font-weight:700;color:#5b6b85;font-size:.85rem}
+.pst{text-align:right;white-space:nowrap}
+.wpr{display:block;font-size:.72rem}
+@media (max-width:640px){
+  .pfields{padding-left:0}
+  .pfield.numeric,.pfield.short{flex:1 1 100%}
+  .pin input{max-width:none}
+  .prow{grid-template-columns:34px 1fr;padding-left:8px}.prow .pst{grid-column:2;text-align:left}
+  .pweekh{grid-template-columns:12px 1fr}.pweekh .pwsum{grid-column:2}
+}
+.pqh span,.pans,.pres,.pnote,.pfb{overflow-wrap:anywhere}
+#s-practice{min-width:0;overflow-wrap:anywhere}
+details.pweek>summary{list-style:none;cursor:pointer}
+details.pweek>summary::-webkit-details-marker{display:none}
+details.pweek>summary::after{content:"▾";color:#94a3b8;margin-left:6px;grid-column:auto}
+details.pweek:not([open])>summary::after{content:"▸"}
+.pweekh{grid-template-columns:12px 1fr auto 14px}
+@media (max-width:640px){.pweekh{grid-template-columns:12px 1fr 14px}.pweekh .pwsum{grid-column:2;grid-row:2}}

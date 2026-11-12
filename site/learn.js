@@ -112,7 +112,7 @@ export function createLearn(ctx) {
     </div>`;
     const box = el.querySelector(".pdfv"), body = el.querySelector(".pdfv-body"), wrap = el.querySelector(".pdfv-pages");
     const pgLabel = el.querySelector(".pdfv-pg"), zBtn = el.querySelector(".pct");
-    let doc = null, zoom = 1, baseW = 0, obs = null, destroyed = false, task = null, pageEls = [], sizes = [], rendered = new Map(), current = 1;
+    let doc = null, zoom = 1, baseW = 0, obs = null, destroyed = false, task = null, pageEls = [], sizes = [], rendered = new Map(), current = 1, pendingPage = 0;
     const dpr = () => Math.min(window.devicePixelRatio || 1, 2);
     const fitWidth = () => Math.max(200, body.clientWidth - 24);
 
@@ -216,12 +216,18 @@ export function createLearn(ctx) {
         pageEls = [...wrap.querySelectorAll(".pdfv-page")];
         lastW = body.clientWidth; relayout();
         pgLabel.textContent = `Page 1 / ${doc.numPages}`;
+        if (pendingPage) { const pp = pendingPage; pendingPage = 0; setTimeout(() => api.goTo(pp), 50); }
       } catch (e) {
         if (!destroyed) wrap.innerHTML = `<div class="pdfv-msg error">The PDF couldn't be loaded here. <button type="button" class="linkbtn" data-retry>Open it in a new tab</button></div>`;
         wrap.querySelector("[data-retry]")?.addEventListener("click", async () => { try { window.open(await sign(path), "_blank", "noopener"); } catch (er) { toast(er.message); } });
       }
     })();
     const api = {
+      goTo(p) {
+        if (!pageEls.length) { pendingPage = p; return; }
+        const pe = pageEls[Math.max(0, Math.min(pageEls.length, p) - 1)];
+        body.scrollTop = pe.offsetTop - wrap.offsetTop - 6; checkVisible();
+      },
       destroy() {
         destroyed = true; document.removeEventListener("keydown", onKey); window.removeEventListener("resize", onScroll); ro.disconnect();
         document.body.classList.remove("noscroll");
@@ -346,7 +352,7 @@ export function createLearn(ctx) {
     const ig = d.files.find((f) => f.kind === "infographic");
     const deck = w.files.find((f) => f.kind === "deck");
     const sections = [pack && ["pack", "Study pack"], ig && ["infographic", "Infographic"], d.goals.length && ["goals", "Goals"],
-      d.videos.length && ["videos", `Videos (${d.videos.length})`], d.readings.length && ["readings", "Readings"], ["week", "This week"]].filter(Boolean);
+      d.videos.length && ["videos", `Videos (${d.videos.length})`], d.readings.length && ["readings", "Readings"], ["practice", "Practice"], ["week", "This week"]].filter(Boolean);
     app.innerHTML = `${crumbs([["Courses", "#/courses"], [c.title, courseHref(c.slug)], [`Week ${w.n}`, weekHref(c.slug, w.n)], [d.weekday]])}
       <div class="card hero day" style="--c:${esc(c.color)}">
         <div class="spread"><span class="eyebrow">Week ${w.n} · ${esc(d.weekday)}</span><span id="donebadge">${d.done ? `<span class="badge green">Done ${esc(fmtDay(d.done_at))}</span>` : ""}</span></div>
@@ -364,7 +370,7 @@ export function createLearn(ctx) {
       ${d.goals.length ? `<section class="card" id="s-goals"><h2>Learning goals</h2><ol class="goals">${d.goals.map((g) => `<li>${esc(g)}</li>`).join("")}</ol></section>` : ""}
       ${d.videos.length ? `<section class="card" id="s-videos"><h2>Videos</h2><div class="vids">${d.videos.map(videoCard).join("")}</div></section>` : ""}
       ${d.readings.length ? `<section class="card" id="s-readings"><h2>Readings</h2><ul class="reads">${d.readings.map((x) => `<li>${x.url ? `<a href="${esc(x.url)}" target="_blank" rel="noopener noreferrer">${esc(x.title)} ${icon.link}</a>` : `<span>${esc(x.title)}</span>`}${x.note ? `<small class="muted">${esc(x.note)}</small>` : ""}</li>`).join("")}</ul></section>` : ""}
-      ${d.practice ? `<section class="card" id="s-practice"><h2>Practice</h2><p>${esc(d.practice)}</p><p class="small muted">The practice task is in the study pack. Send your answers to your mentor as usual.</p></section>` : ""}
+      <section class="card" id="s-practice"><div class="spread"><h2>Practice</h2><span id="pbadge"></span></div><div id="practice"><p class="muted small">Loading…</p></div></section>
       <section class="card" id="s-week"><h2>This week</h2>
         ${w.quizzes.length ? w.quizzes.map(quizLine).join("") : `<p class="small muted">No quiz is linked to this week yet.</p>`}
         ${fileList(w.files)}
@@ -372,7 +378,8 @@ export function createLearn(ctx) {
       <div class="day-foot row">${nv.next ? `<a class="btn" href="${dayHref(c.slug, nv.next.week, nv.next.position)}">Next: ${esc(nv.next.title)} →</a>` : ""}<a class="btn secondary" href="${weekHref(c.slug, w.n)}">Week ${w.n} overview</a></div>`;
 
     app.querySelectorAll("[data-jump]").forEach((a) => a.addEventListener("click", (e) => { e.preventDefault(); document.getElementById("s-" + a.dataset.jump)?.scrollIntoView({ behavior: "smooth", block: "start" }); }));
-    if (pack) pdfViewer(app.querySelector("#packv"), pack.path, { title: `${d.weekday}: ${d.title}`, pages: pack.pages });
+    const packViewer = pack ? pdfViewer(app.querySelector("#packv"), pack.path, { title: `${d.weekday}: ${d.title}`, pages: pack.pages }) : null;
+    practiceSection(app.querySelector("#practice"), { slug, n, pos, d, packViewer });
     if (ig) {
       sign(ig.path).then((url) => {
         const b = app.querySelector("#igbox"); if (!b) return;
@@ -398,10 +405,138 @@ export function createLearn(ctx) {
     });
   }
 
+
+  // ---------------------------------------------------------------- practice (stage 2)
+  const fmtNum = (x) => (x === null || x === undefined ? "" : (Math.abs(x) >= 1000 ? Number(x).toLocaleString("en-US", { maximumFractionDigits: 3 }) : String(+Number(x).toPrecision(6))));
+  const isNum = (v) => /^\s*[-+−]?(\d[\d,]*\.?\d*|\.\d+)([eE][-+]?\d+)?\s*%?\s*$/.test(v || "");
+  function practiceBadge(sub) {
+    if (!sub) return `<span class="badge teal">Not started</span>`;
+    if (sub.status === "draft") return `<span class="badge amber">Draft${sub.attempt > 1 ? ` · attempt ${sub.attempt}` : ""}</span>`;
+    if (sub.released) return `<span class="badge green">Marked · ${fmtNum(sub.score)}/${fmtNum(sub.max_score)}</span>`;
+    return `<span class="badge gray">Submitted · awaiting marking</span>`;
+  }
+  function practiceSection(el, { slug, n, pos, d, packViewer }) {
+    let data = null, editing = false, dirty = false, timer = 0, saving = false;
+    const badge = document.getElementById("pbadge");
+    const fallback = () => {
+      el.innerHTML = d.practice ? `<p>${esc(d.practice)}</p><p class="small muted">This day's practice is in the study pack. Send your answers to your mentor as usual.</p>`
+                                : `<p class="small muted">No practice task for this day.</p>`;
+    };
+    const values = () => {
+      const out = {};
+      el.querySelectorAll("[data-f]").forEach((i) => { out[i.dataset.f] = i.value; });
+      return out;
+    };
+    async function save(submit = false, quiet = false) {
+      if (saving) return; saving = true; clearTimeout(timer);
+      const st = el.querySelector("#psaved");
+      if (st && !quiet) st.textContent = submit ? "Submitting…" : "Saving…";
+      try {
+        data = await rpc("save_practice", { p_course: slug, p_week: n, p_position: pos, p_answers: values(), p_submit: submit });
+        dirty = false;
+        if (submit) { editing = false; render(); toast("Submitted. Numbers are checked; Study Mentor marks the rest."); document.getElementById("s-practice")?.scrollIntoView({ behavior: "smooth", block: "start" }); }
+        else { const s2 = el.querySelector("#psaved"); if (s2) s2.textContent = `Draft saved ${fmtCairo(data.submission?.saved_at)}`; badge.innerHTML = practiceBadge(data.submission); }
+      } catch (e) {
+        const s2 = el.querySelector("#psaved"); if (s2) s2.textContent = "Not saved";
+        toast(e.message || "Couldn't save");
+      }
+      saving = false;
+    }
+    function fieldInput(f, val, ro) {
+      const id = `pf-${f.id}`;
+      const lab = f.label && f.label !== "Answer" ? f.label : (f.kind === "numeric" ? "Answer" : "Your answer");
+      if (ro) {
+        return `<div class="pval"><span class="plab">${esc(lab)}</span><span class="pans ${val ? "" : "muted"}">${val ? esc(val) : "No answer"}${val && f.unit && f.kind === "numeric" ? ` <small>${esc(f.unit)}</small>` : ""}</span></div>`;
+      }
+      if (f.kind === "numeric") {
+        return `<label class="pnum" for="${id}"><span class="plab">${esc(lab)}</span><span class="pin"><input id="${id}" data-f="${esc(f.id)}" data-kind="numeric" inputmode="decimal" autocomplete="off" spellcheck="false" value="${esc(val || "")}" placeholder="number">${f.unit ? `<small>${esc(f.unit)}</small>` : ""}</span><em class="pwarn" hidden>Enter a number only (the unit is fixed)</em></label>`;
+      }
+      if (f.kind === "short") {
+        return `<label class="ptext" for="${id}"><span class="plab">${esc(lab)}</span><input id="${id}" data-f="${esc(f.id)}" autocomplete="off" value="${esc(val || "")}" maxlength="2000"></label>`;
+      }
+      return `<label class="ptext" for="${id}"><span class="plab">${esc(lab)}</span><textarea id="${id}" data-f="${esc(f.id)}" rows="3" maxlength="8000">${esc(val || "")}</textarea></label>`;
+    }
+    function resultLine(f, a) {
+      if (!a || a.marks === undefined || a.marks === null) return `<div class="pres pending">Not marked</div>`;
+      const ok = a.correct, part = !ok && a.marks > 0;
+      const exp = f.kind === "numeric" && a.expected !== undefined && a.expected !== null
+        ? ` · expected ${fmtNum(a.expected)}${a.tolerance ? ` ± ${+Number(a.tolerance).toPrecision(2)}` : ""}${f.unit ? ` ${esc(f.unit)}` : ""}` : "";
+      return `<div class="pres ${ok ? "ok" : part ? "part" : "bad"}"><b>${ok ? "✓" : part ? "◐" : "✗"} ${fmtNum(a.marks)}/${fmtNum(a.max)}</b><span>${exp}</span>${a.feedback ? `<p>${esc(a.feedback)}</p>` : ""}</div>`;
+    }
+    function render() {
+      const qs = data.questions || [];
+      if (!qs.length) { badge.innerHTML = ""; fallback(); return; }
+      const sub = data.submission;
+      const ans = sub?.answers || {};
+      const ro = !(editing || !sub || sub.can_edit);
+      const rel = sub?.released;
+      badge.innerHTML = practiceBadge(sub);
+      const nf = qs.reduce((k, q) => k + q.fields.length, 0), nn = qs.reduce((k, q) => k + q.fields.filter((f) => f.kind === "numeric").length, 0);
+      const page = data.page || qs[0]?.page;
+      let html = `<div class="pintro">
+        <p class="small">${qs.length} questions · ${nf} answers${ro ? (sub?.attempt > 1 ? ` · attempt ${sub.attempt}` : "") : `${nn ? ` · ${nn} numeric answers are checked automatically when you submit (within a tolerance)` : ""}. Written answers are marked by Study Mentor. You can submit once${sub?.attempt > 1 ? ` (this is attempt ${sub.attempt})` : ""}; scores show after the marking is released. Drafts save automatically.`}</p>
+        ${packViewer && page ? `<button type="button" class="btn sm secondary" id="ptask">${icon.pdf} Task and data: pack page ${page}</button>` : ""}
+      </div>`;
+      if (rel) {
+        html += `<div class="pscore"><div><span class="eyebrow">Your score</span><b>${fmtNum(sub.score)}<small>/${fmtNum(sub.max_score)}</small></b></div>${bar(+sub.score, +sub.max_score, "#14b8a6")}<span class="muted small">${pct(+sub.score, +sub.max_score)}% · submitted ${esc(fmtCairo(sub.submitted_at))}</span>
+          ${sub.feedback ? `<p class="pfb">${esc(sub.feedback)}</p>` : ""}</div>`;
+      } else if (sub && sub.status === "submitted") {
+        html += `<div class="pnote">Submitted ${esc(fmtCairo(sub.submitted_at))}. Your answers are below; the score and feedback appear here once Study Mentor releases the marking.</div>`;
+      }
+      let sec = null;
+      for (const q of qs) {
+        if (q.section !== sec) { sec = q.section; if (sec) html += `<h3 class="psec">${esc(sec)}</h3>`; }
+        html += `<div class="pq"><div class="pqh"><b>${esc(q.qkey)}</b><span>${esc(q.prompt)}</span></div><div class="pfields">
+          ${q.fields.map((f) => `<div class="pfield ${f.kind}">${fieldInput(f, ans[f.id]?.value, ro)}${rel ? resultLine(f, ans[f.id]) : ""}</div>`).join("")}</div></div>`;
+      }
+      if (!ro) {
+        html += `<div class="pactions"><span class="small muted" id="psaved">${sub?.status === "draft" ? `Draft saved ${esc(fmtCairo(sub.saved_at))}` : "Not saved yet"}</span>
+          <div class="row"><button class="btn secondary" id="psave">Save draft</button><button class="btn" id="psubmit">Submit answers</button></div></div>`;
+      } else if (sub?.can_resubmit) {
+        html += `<div class="pactions"><span class="small muted">Study Mentor has allowed another attempt.</span><button class="btn" id="pagain">Start attempt ${sub.attempt + 1}</button></div>`;
+      }
+      el.innerHTML = html;
+      el.querySelector("#ptask")?.addEventListener("click", () => {
+        document.getElementById("s-pack")?.scrollIntoView({ behavior: "smooth", block: "start" });
+        packViewer.goTo(page);
+      });
+      el.querySelector("#pagain")?.addEventListener("click", () => { editing = true; render(); });
+      if (ro) return;
+      el.querySelectorAll("[data-f]").forEach((i) => i.addEventListener("input", () => {
+        dirty = true; clearTimeout(timer); timer = setTimeout(() => save(false, true), 4000);
+        if (i.dataset.kind === "numeric") i.closest(".pnum").querySelector(".pwarn").hidden = !i.value.trim() || isNum(i.value);
+        const st = el.querySelector("#psaved"); if (st) st.textContent = "Unsaved changes";
+      }));
+      el.querySelectorAll("textarea").forEach((t) => { const fit = () => { t.style.height = "auto"; t.style.height = Math.min(480, t.scrollHeight + 2) + "px"; }; t.addEventListener("input", fit); fit(); });
+      el.querySelector("#psave").onclick = () => save(false);
+      el.querySelector("#psubmit").onclick = () => {
+        const v = values(); const blank = Object.values(v).filter((x) => !String(x).trim()).length;
+        const bad = [...el.querySelectorAll("[data-kind=numeric]")].filter((i) => i.value.trim() && !isNum(i.value)).length;
+        const m = modal(`<h2>Submit your practice?</h2>
+          <p>${blank ? `<b>${blank}</b> of ${Object.keys(v).length} answers are empty. ` : "All answers are filled in. "}${bad ? `<b>${bad}</b> numeric answers aren't plain numbers and will be marked wrong. ` : ""}</p>
+          <p class="small muted">You can submit once. Numbers are checked straight away; Study Mentor marks the written answers and releases your score.</p>
+          <div class="row end"><button class="btn secondary" data-x>Keep editing</button><button class="btn" data-go>Submit</button></div>`);
+        m.el.querySelector("[data-x]").onclick = m.close;
+        m.el.querySelector("[data-go]").onclick = () => { m.close(); save(true); };
+      };
+    }
+    ctx.onLeave(() => { if (dirty) save(false, true); clearTimeout(timer); });
+    rpc("get_practice", { p_course: slug, p_week: n, p_position: pos })
+      .then((r) => { data = r; render(); })
+      .catch(() => { fallback(); });
+  }
+
   async function pageProgress() {
     setWide(true);
     app.innerHTML = `<h1>Progress</h1><div class="center muted">Loading…</div>`;
-    const data = await rpc("learning_dashboard");
+    const [data, prac] = await Promise.all([rpc("learning_dashboard"), rpc("practice_dashboard").catch(() => [])]);
+    const pweeks = [];
+    for (const x of prac) {
+      let g = pweeks.find((k) => k.course === x.course && k.week === x.week);
+      if (!g) { const w0 = data.weeks.find((w) => w.course === x.course && w.n === x.week); g = { course: x.course, week: x.week, w: w0, days: [], score: 0, max: 0, released: 0 }; pweeks.push(g); }
+      g.days.push(x);
+      if (x.released) { g.score += +x.score; g.max += +x.max_score; g.released++; }
+    }
     const quizzes = data.weeks.flatMap((w) => w.quizzes.map((q) => ({ ...q, w })));
     const totDone = data.courses.reduce((n, c) => n + c.days_done, 0), tot = data.courses.reduce((n, c) => n + c.days_total, 0);
     app.innerHTML = `${crumbs([["Courses", "#/courses"], ["Progress"]])}<h1>Progress</h1>
@@ -417,9 +552,15 @@ export function createLearn(ctx) {
           <a class="qname" href="${q.best ? `#/results/${esc(q.best.attempt_id)}` : `#/exam/${esc(q.slug)}`}"><b>${esc(q.title)}</b><small class="muted">${esc(q.w.course_title)} · Week ${q.w.n}</small></a>
           <div class="qscore">${q.best ? `<b>${esc(String(q.best.pct))}%</b><small class="muted">${esc(String(+q.best.score))}/${esc(String(+q.best.max))}</small>` : q.submitted ? `<span class="badge gray">Awaiting results</span>` : q.in_progress ? `<span class="badge amber">In progress</span>` : `<span class="badge teal">Not attempted</span>`}</div>
           <a class="small qgo" href="${q.best ? `#/results/${esc(q.best.attempt_id)}` : `#/exam/${esc(q.slug)}`}">${q.best ? "Results" : "Open"} →</a></div>`).join("")}</div>` : `<p class="muted small">No quizzes are linked to your course weeks yet.</p>`}</section>
+      <section class="card" id="s-practice-scores"><h2>Practice scores</h2>${pweeks.length ? pweeks.map((g) => `<details class="pweek"${g.days.some((x) => x.status) ? " open" : ""}>
+          <summary class="pweekh"><span class="qdot" style="background:${esc(g.w?.color || "#94a3b8")}"></span><b>${esc(g.w?.course_title || g.course)} · Week ${g.week}</b>
+            <span class="pwsum">${g.released ? `<b>${fmtNum(g.score)}/${fmtNum(g.max)}</b> <small class="muted">${pct(g.score, g.max)}% · ${g.released} of ${g.days.length} days marked</small>` : `<small class="muted">${g.days.filter((x) => x.status === "submitted").length} of ${g.days.length} submitted</small>`}</span></summary>
+          ${g.days.map((x) => `<a class="prow" href="${dayHref(x.course, x.week, x.position)}"><span class="pday">${esc(x.weekday.slice(0, 3))}</span><span class="pname">${esc(x.title)}<small class="muted"> · ${x.questions} questions</small></span>
+            <span class="pst">${x.released ? `<b>${fmtNum(x.score)}/${fmtNum(x.max_score)}</b><small class="muted"> ${pct(+x.score, +x.max_score)}%</small>` : x.status === "submitted" ? `<span class="badge gray">Awaiting marking</span>` : x.status === "draft" ? `<span class="badge amber">Draft</span>` : `<span class="badge teal">Not started</span>`}</span></a>`).join("")}</details>`).join("")
+        : `<p class="muted small">No practice is loaded for your published days yet.</p>`}</section>
       <section class="card"><h2>By week</h2><div class="wtable">${data.weeks.map((w) => `<a class="wrow" href="${weekHref(w.course, w.n)}">
           <span class="qdot" style="background:${esc(w.color)}"></span><span class="wname"><b>Week ${w.n} · ${esc(w.title)}</b><small class="muted">${esc(w.course_title)}</small></span>
-          <span class="wbar">${bar(w.days_done, w.days_total, w.color)}</span><span class="wnum">${w.days_done}/${w.days_total}</span></a>`).join("")}</div></section>
+          <span class="wbar">${bar(w.days_done, w.days_total, w.color)}</span><span class="wnum">${w.days_done}/${w.days_total}${(() => { const g = pweeks.find((k) => k.course === w.course && k.week === w.n); return g && g.released ? `<small class="muted wpr">practice ${pct(g.score, g.max)}%</small>` : ""; })()}</span></a>`).join("")}</div></section>
       <section class="card"><h2>Recently done</h2>${data.recent.length ? `<ul class="recent">${data.recent.map((x) => `<li><a href="${dayHref(x.course, x.week, x.position)}"><span class="qdot" style="background:${esc(x.color)}"></span><b>${esc(x.title)}</b> <small class="muted">${esc(x.course_title)} · W${x.week} ${esc(x.weekday)}</small></a><small class="muted">${esc(fmtCairo(x.done_at))}</small></li>`).join("")}</ul>` : `<p class="muted small">Mark a day as done and it shows up here.</p>`}</section>`;
   }
 
